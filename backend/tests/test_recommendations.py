@@ -1,3 +1,4 @@
+import asyncio
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -157,6 +158,41 @@ async def test_explicit_keyword_zero_results_falls_back_to_category_search():
     assert len(amap.searches) == 2
     assert amap.searches[1][1]["keywords"] == []
     assert result.places
+
+
+@pytest.mark.asyncio
+async def test_route_requests_run_concurrently_without_changing_result_order():
+    class ConcurrentRouteAmap(FakeAmap):
+        def __init__(self):
+            super().__init__()
+            self.in_flight = 0
+            self.max_in_flight = 0
+
+        async def route(self, origin, destination, mode):
+            self.routes.append((origin, destination, mode))
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0.01)
+            self.in_flight -= 1
+            return {"distance": 800, "duration": 720}
+
+    amap = ConcurrentRouteAmap()
+    result = await build_recommendations(
+        RecommendationRequest(
+            longitude=116.326,
+            latitude=40.003,
+            coordinate_system="autonavi",
+            categories=["美食", "景点"],
+            result_count=3,
+        ),
+        amap,
+    )
+
+    assert amap.max_in_flight > 1
+    assert [place.name for place in result.places] == [
+        "测试川菜馆 <不可信>",
+        "湖畔公园",
+    ]
 
 
 @pytest.mark.asyncio

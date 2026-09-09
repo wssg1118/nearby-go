@@ -260,6 +260,18 @@ function handleEvent(event) {
   return "";
 }
 
+function progressText(event) {
+  if (!["node_started", "workflow_started"].includes(event.event)) return "";
+  const title = String(event.data?.title || event.data?.node_title || "");
+  if (title.includes("需求分流")) return "正在理解你的需求…";
+  if (title.includes("提取推荐条件")) return "正在整理预算、距离和偏好…";
+  if (title.includes("高德附近推荐")) return "正在查询附近地点和实时路线…";
+  if (title.includes("结果可信度审计")) return "正在核对地点与路线信息…";
+  if (title.includes("生成推荐说明")) return "已找到结果，正在生成推荐…";
+  if (event.event === "workflow_started") return "正在理解你的需求…";
+  return "";
+}
+
 async function sendQuery(query) {
   if (state.busy || !query.trim()) return;
   state.busy = true;
@@ -301,6 +313,8 @@ async function sendQuery(query) {
         const line = chunk.split("\n").find((item) => item.startsWith("data:"));
         if (!line) continue;
         const payload = JSON.parse(line.slice(5).trim());
+        const progress = progressText(payload);
+        if (progress && !rawAnswer) answerBubble.textContent = progress;
         rawAnswer += handleEvent(payload);
         answer = stripReasoning(rawAnswer);
         if (answer) {

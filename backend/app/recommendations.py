@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Iterable
 from typing import Any
@@ -29,6 +30,7 @@ CATEGORY_TYPES = {
 }
 DINING_CATEGORIES = {"美食", "餐厅", "咖啡"}
 ACTIVITY_CATEGORIES = {"购物", "娱乐", "电影", "景点", "公园"}
+MAX_CONCURRENT_ROUTE_REQUESTS = 6
 
 
 def _number(value: Any) -> float | None:
@@ -213,6 +215,21 @@ async def _search_group(
             )
         )
     return _prepare_candidates(collected, request, group)
+
+
+async def _fetch_route(
+    amap: AmapClient,
+    semaphore: asyncio.Semaphore,
+    origin: tuple[float, float],
+    destination: tuple[float, float],
+    mode: str,
+) -> tuple[dict[str, int] | None, AmapError | None]:
+    """Fetch one route without making independent route failures cancel the batch."""
+    try:
+        async with semaphore:
+            return await amap.route(origin, destination, mode), None
+    except AmapError as exc:
+        return None, exc
 
 
 def _effective_day_count(request: RecommendationRequest) -> int:
@@ -523,16 +540,45 @@ async def build_recommendations(
     itinerary: list[ItinerarySegment] = []
     day_pairs: list[list[tuple[PlaceRecommendation, ItinerarySegment]]] = []
 
+    route_specs: list[
+        tuple[int, int, tuple[float, float], tuple[float, float]]
+    ] = []
+    for day_index, candidates in enumerate(candidate_days, start=1):
+        segment_origin = origin
+        for sequence, poi in enumerate(candidates, start=1):
+            destination = (poi["_lng"], poi["_lat"])
+            route_specs.append((day_index, sequence, segment_origin, destination))
+            segment_origin = destination
+
+    route_semaphore = asyncio.Semaphore(MAX_CONCURRENT_ROUTE_REQUESTS)
+    route_results = await asyncio.gather(
+        *(
+            _fetch_route(
+                amap,
+                route_semaphore,
+                segment_origin,
+                destination,
+                request.transport,
+            )
+            for _, _, segment_origin, destination in route_specs
+        )
+    )
+    routes_by_stop = {
+        (day_index, sequence): route_result
+        for (day_index, sequence, _, _), route_result in zip(
+            route_specs, route_results
+        )
+    }
+
     for day_index, candidates in enumerate(candidate_days, start=1):
         segment_origin = origin
         segment_origin_name = "当前位置" if day_index == 1 else f"第{day_index}天起点"
         pairs: list[tuple[PlaceRecommendation, ItinerarySegment]] = []
         for sequence, poi in enumerate(candidates, start=1):
             destination = (poi["_lng"], poi["_lat"])
-            route = None
-            try:
-                route = await amap.route(segment_origin, destination, request.transport)
-            except AmapError as exc:
+            route, route_error = routes_by_stop[(day_index, sequence)]
+            if route_error is not None:
+                exc = route_error
                 route_failures.append(exc)
 
             biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
