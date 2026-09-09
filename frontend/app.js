@@ -42,6 +42,7 @@ const state = {
   busy: false,
   readAloud: localStorage.getItem("nearbygo-read-aloud") !== "false",
   recorder: null,
+  recognition: null,
   recordingChunks: [],
   ttsChunks: [],
   ttsReceived: false,
@@ -252,6 +253,9 @@ function handleEvent(event) {
     return "";
   }
   if (["message", "agent_message"].includes(event.event) && event.answer) return event.answer;
+  if (event.event === "workflow_finished" && event.data?.status === "failed") {
+    throw new Error(event.data.error || "Dify 工作流执行失败");
+  }
   if (event.event === "error") throw new Error(event.message || "Dify 调用失败");
   return "";
 }
@@ -331,6 +335,48 @@ function preferredRecordingType() {
   return candidates.find((type) => window.MediaRecorder?.isTypeSupported(type)) || "";
 }
 
+function browserRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function resetVoiceButton() {
+  voiceButton.classList.remove("recording");
+  voiceButton.setAttribute("aria-label", "按下语音输入");
+  voiceButton.textContent = "🎙️";
+}
+
+function startBrowserRecognition(Recognition) {
+  const recognition = new Recognition();
+  state.recognition = recognition;
+  recognition.lang = "zh-CN";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  recognition.addEventListener("start", () => {
+    voiceButton.classList.add("recording");
+    voiceButton.setAttribute("aria-label", "停止语音识别");
+  });
+  recognition.addEventListener("result", (event) => {
+    let transcript = "";
+    for (let index = 0; index < event.results.length; index += 1) {
+      transcript += event.results[index][0]?.transcript || "";
+    }
+    input.value = transcript.trim();
+    input.dispatchEvent(new Event("input"));
+  });
+  recognition.addEventListener("error", (event) => {
+    if (!["aborted", "no-speech"].includes(event.error)) {
+      window.alert(`语音识别失败：${event.error || "请检查麦克风权限"}`);
+    }
+  });
+  recognition.addEventListener("end", () => {
+    state.recognition = null;
+    resetVoiceButton();
+    input.focus();
+  }, { once: true });
+  recognition.start();
+}
+
 async function transcribeRecording(blob) {
   voiceButton.disabled = true;
   voiceButton.textContent = "…";
@@ -358,12 +404,26 @@ async function transcribeRecording(blob) {
 
 async function toggleRecording() {
   if (state.busy) return;
+  if (state.recognition) {
+    state.recognition.stop();
+    return;
+  }
   if (state.recorder?.state === "recording") {
     state.recorder.stop();
     return;
   }
+  const Recognition = browserRecognitionConstructor();
+  if (Recognition) {
+    try {
+      startBrowserRecognition(Recognition);
+    } catch {
+      resetVoiceButton();
+      window.alert("无法启动语音识别，请检查浏览器麦克风权限。");
+    }
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    window.alert("当前浏览器不支持录音，请使用 Chrome、Edge 或 Safari 新版本。");
+    window.alert("当前浏览器不支持语音输入，请使用 Chrome、Edge 或 Safari 新版本。");
     return;
   }
   try {
@@ -375,8 +435,7 @@ async function toggleRecording() {
       if (event.data.size) state.recordingChunks.push(event.data);
     });
     state.recorder.addEventListener("stop", () => {
-      voiceButton.classList.remove("recording");
-      voiceButton.setAttribute("aria-label", "按下录音");
+      resetVoiceButton();
       stream.getTracks().forEach((track) => track.stop());
       const blob = new Blob(state.recordingChunks, { type: state.recorder.mimeType || "audio/webm" });
       void transcribeRecording(blob);
