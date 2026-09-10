@@ -1336,7 +1336,7 @@ workflow:
                   map_url = urljoin(base_url, route_path.lstrip('/'))
                   blocks.extend([
                       '## 高德位置概览',
-                      f'![附近候选与实际路线示意]({map_url})',
+                      f'![map:附近候选与实际路线示意]({map_url})',
                       '> 地图已按高德实际路线绘制；未取得路线的路段以直线示意，导航请以高德 App 实时路线为准。',
                   ])
 
@@ -1384,22 +1384,22 @@ workflow:
 
               photos = []
               places = payload.get('places') if isinstance(payload.get('places'), list) else []
-              for place in places:
+              for index, place in enumerate(places, start=1):
                   if not isinstance(place, dict):
                       continue
                   name = safe_text(place.get('name'), 30) or '附近地点'
                   urls = place.get('image_urls') if isinstance(place.get('image_urls'), list) else []
-                  for raw_url in urls[:1]:
-                      try:
-                          parsed = urlparse(str(raw_url))
-                      except ValueError:
-                          continue
-                      if parsed.scheme == 'https' and parsed.netloc:
-                          photos.append(f'![{name}]({parsed.geturl()})')
-                  if len(photos) >= 3:
-                      break
+                  if not urls:
+                      continue
+                  raw_url = str(urls[0])
+                  try:
+                      parsed = urlparse(raw_url)
+                  except ValueError:
+                      continue
+                  if parsed.scheme == 'https' and parsed.netloc:
+                      photos.append(f'![{index}·{name}]({parsed.geturl()})')
               if photos:
-                  blocks.extend(['### 地点图片'] + photos[:3])
+                  blocks.extend(['### 推荐地点图片'] + photos)
               return {'visual_cards': '\n\n'.join(blocks)}
         code_language: python3
         desc: 使用服务端签名地图地址生成确定性的高德地图、路线摘要和地点图片卡片

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#14532d" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: https://*.autonavi.com https://*.amap.com; style-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'" />
     <title>附近发现 · NearbyGo</title>
-    <link rel="stylesheet" href="/styles.css?v=20260830-2" />
+    <link rel="stylesheet" href="/styles.css?v=20260910-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -16,13 +16,41 @@
           <h1>附近发现 · NearbyGo</h1>
         </div>
         <div class="topbar-actions">
-          <button id="clearChatButton" class="clear-chat-button" type="button">清空对话</button>
+          <button id="historyButton" class="clear-chat-button" type="button">历史对话</button>
+          <button id="clearChatButton" class="clear-chat-button" type="button">新对话</button>
           <button id="locationButton" class="location-button" type="button">
             <span class="pulse"></span>
             <span id="locationLabel">正在定位</span>
           </button>
         </div>
       </header>
+
+      <div id="historyPanel" class="float-panel hidden" aria-label="历史对话">
+        <div class="panel-head">
+          <strong>历史对话</strong>
+          <button id="closeHistoryPanel" class="panel-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <button id="newChatButton" class="panel-new-chat" type="button">＋ 开始新对话</button>
+        <ul id="historyList" class="history-list"></ul>
+      </div>
+
+      <div id="locationPanel" class="float-panel hidden" aria-label="修改定位">
+        <div class="panel-head">
+          <strong>修改定位</strong>
+          <button id="closeLocationPanel" class="panel-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <input
+          id="placeSearchInput"
+          class="place-search-input"
+          type="text"
+          maxlength="50"
+          placeholder="搜索地点，如：五道口、三里屯"
+          aria-label="搜索地点"
+          autocomplete="off"
+        />
+        <ul id="placeSearchResults" class="place-results"></ul>
+        <button id="useBrowserLocation" class="panel-use-browser" type="button">重新使用浏览器定位</button>
+      </div>
 
       <section id="messages" class="messages" aria-live="polite">
         <article class="message assistant">
@@ -54,7 +82,7 @@
       </form>
       <p class="privacy-note">聊天记录仅保存在此设备浏览器，可随时清空；定位不保存。路线、价格和营业信息可能变化，请以商家及高德地图为准。</p>
     </main>
-    <script src="/markdown.js?v=20260831-1" defer></script>
-    <script src="/app.js?v=20260909-1" defer></script>
+    <script src="/markdown.js?v=20260910-1" defer></script>
+    <script src="/app.js?v=20260910-1" defer></script>
   </body>
 </html>

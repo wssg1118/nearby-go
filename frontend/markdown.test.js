@@ -63,8 +63,16 @@ test("marks an encoded AMap HTTPS navigation URL as a prominent navigation link"
 test("renders only HTTPS Markdown images as lazy visual cards", () => {
   const html = renderMarkdown("![附近地图](https://guide.example.com/api/route-map?sig=safe)\n![坏图](javascript:alert(1))");
 
-  assert.match(html, /class="answer-visual"/);
+  assert.match(html, /class="answer-visual answer-visual-thumb"/);
   assert.match(html, /loading="lazy"/);
   assert.match(html, /https:\/\/guide\.example\.com\/api\/route-map/);
   assert.ok(!html.includes('src="javascript:'));
+});
+
+test("marks map: prefixed image alt text as a large map visual", () => {
+  const html = renderMarkdown("![map:附近候选与实际路线示意](https://guide.example.com/api/route-map?sig=safe)");
+
+  assert.match(html, /class="answer-visual answer-visual-map"/);
+  assert.match(html, /alt="附近候选与实际路线示意"/);
+  assert.ok(!html.includes("map:"));
 });

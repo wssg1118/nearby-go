@@ -44,8 +44,11 @@
         if (labelEnd > cursor + 2 && urlEnd > labelEnd + 2) {
           const url = safeHttpsUrl(source.slice(labelEnd + 2, urlEnd));
           if (url) {
-            const alt = escapeHtml(source.slice(cursor + 2, labelEnd));
-            output += `<img class="answer-visual" src="${escapeHtml(url)}" alt="${alt}" loading="lazy">`;
+            let alt = source.slice(cursor + 2, labelEnd);
+            const isMap = alt.startsWith("map:");
+            if (isMap) alt = alt.slice(4);
+            const visualClass = isMap ? "answer-visual answer-visual-map" : "answer-visual answer-visual-thumb";
+            output += `<img class="${visualClass}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy">`;
             cursor = urlEnd + 1;
             continue;
           }

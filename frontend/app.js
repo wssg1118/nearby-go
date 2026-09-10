@@ -1,43 +1,110 @@
-const CHAT_MEMORY_KEY = "nearbygo-chat-memory-v1";
+const LEGACY_CHAT_KEY = "nearbygo-chat-memory-v1";
+const SESSIONS_KEY = "nearbygo-sessions-v1";
 const MAX_SAVED_MESSAGES = 24;
 const MAX_SAVED_MESSAGE_LENGTH = 6000;
+const MAX_SAVED_SESSIONS = 30;
 
-function loadChatMemory() {
+function sanitizeHistory(history) {
+  return Array.isArray(history)
+    ? history
+        .filter(
+          (item) =>
+            item &&
+            ["user", "assistant"].includes(item.role) &&
+            typeof item.text === "string" &&
+            item.text.trim(),
+        )
+        .slice(-MAX_SAVED_MESSAGES)
+        .map((item) => ({
+          role: item.role,
+          text: item.text.slice(0, MAX_SAVED_MESSAGE_LENGTH),
+        }))
+    : [];
+}
+
+function migrateLegacyChat() {
+  if (localStorage.getItem(SESSIONS_KEY)) return [];
   try {
-    const saved = JSON.parse(localStorage.getItem(CHAT_MEMORY_KEY) || "null");
-    if (!saved || typeof saved !== "object") return { conversationId: "", history: [] };
-
-    const history = Array.isArray(saved.history)
-      ? saved.history
-          .filter(
-            (item) =>
-              item &&
-              ["user", "assistant"].includes(item.role) &&
-              typeof item.text === "string" &&
-              item.text.trim(),
-          )
-          .slice(-MAX_SAVED_MESSAGES)
-          .map((item) => ({
-            role: item.role,
-            text: item.text.slice(0, MAX_SAVED_MESSAGE_LENGTH),
-          }))
-      : [];
-
-    return {
-      conversationId: typeof saved.conversationId === "string" ? saved.conversationId : "",
-      history,
-    };
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_CHAT_KEY) || "null");
+    if (legacy && typeof legacy === "object" && (legacy.history?.length || legacy.conversationId)) {
+      const migrated = [
+        {
+          id: crypto.randomUUID(),
+          title: "历史对话",
+          conversationId: typeof legacy.conversationId === "string" ? legacy.conversationId : "",
+          history: sanitizeHistory(legacy.history),
+          updatedAt: Date.now(),
+        },
+      ];
+      localStorage.setItem(
+        SESSIONS_KEY,
+        JSON.stringify({ sessions: migrated, activeId: migrated[0].id }),
+      );
+      return migrated;
+    }
   } catch {
-    localStorage.removeItem(CHAT_MEMORY_KEY);
-    return { conversationId: "", history: [] };
+    // Corrupted legacy data is simply dropped.
+  }
+  return [];
+}
+
+function loadSessions() {
+  const migrated = migrateLegacyChat();
+  if (migrated.length) return { sessions: migrated, activeId: migrated[0].id };
+  try {
+    const saved = JSON.parse(localStorage.getItem(SESSIONS_KEY) || "null");
+    if (!saved || !Array.isArray(saved.sessions)) return { sessions: [], activeId: "" };
+    const sessions = saved.sessions
+      .filter((session) => session && typeof session.id === "string")
+      .map((session) => ({
+        id: session.id,
+        title: typeof session.title === "string" ? session.title.slice(0, 40) : "",
+        conversationId:
+          typeof session.conversationId === "string" ? session.conversationId : "",
+        history: sanitizeHistory(session.history),
+        updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : 0,
+      }))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_SAVED_SESSIONS);
+    const activeId = sessions.some((session) => session.id === saved.activeId)
+      ? saved.activeId
+      : (sessions[0]?.id || "");
+    return { sessions, activeId };
+  } catch {
+    localStorage.removeItem(SESSIONS_KEY);
+    return { sessions: [], activeId: "" };
   }
 }
 
-const savedChat = loadChatMemory();
+function persistSessions() {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessionStore));
+  } catch {
+    // Storage can be unavailable or full in private/in-app browsers.
+  }
+}
+
+const sessionStore = loadSessions();
+
+function currentSession() {
+  let session = sessionStore.sessions.find((item) => item.id === sessionStore.activeId);
+  if (!session) {
+    session = {
+      id: crypto.randomUUID(),
+      title: "",
+      conversationId: "",
+      history: [],
+      updatedAt: Date.now(),
+    };
+    sessionStore.sessions.unshift(session);
+    sessionStore.activeId = session.id;
+    persistSessions();
+  }
+  return session;
+}
+
 const state = {
   position: null,
-  conversationId: savedChat.conversationId,
-  history: savedChat.history,
   user: localStorage.getItem("nearbygo-user") || crypto.randomUUID(),
   busy: false,
   recorder: null,
@@ -55,6 +122,16 @@ const locationButton = document.querySelector("#locationButton");
 const locationLabel = document.querySelector("#locationLabel");
 const voiceButton = document.querySelector("#voiceButton");
 const welcomeMessage = messages.firstElementChild.cloneNode(true);
+const historyButton = document.querySelector("#historyButton");
+const historyPanel = document.querySelector("#historyPanel");
+const historyList = document.querySelector("#historyList");
+const closeHistoryButton = document.querySelector("#closeHistoryPanel");
+const newChatButton = document.querySelector("#newChatButton");
+const locationPanel = document.querySelector("#locationPanel");
+const closeLocationButton = document.querySelector("#closeLocationPanel");
+const placeSearchInput = document.querySelector("#placeSearchInput");
+const placeSearchResults = document.querySelector("#placeSearchResults");
+const useBrowserLocationButton = document.querySelector("#useBrowserLocation");
 
 const { escapeHtml, renderMarkdown } = window.NearbyGoMarkdown;
 
@@ -110,44 +187,140 @@ function addMessage(role, text = "") {
   return bubble;
 }
 
-function saveChatMemory() {
-  try {
-    localStorage.setItem(
-      CHAT_MEMORY_KEY,
-      JSON.stringify({
-        conversationId: state.conversationId,
-        history: state.history.slice(-MAX_SAVED_MESSAGES),
-      }),
-    );
-  } catch {
-    // Storage can be unavailable or full in private/in-app browsers.
-  }
-}
-
 function rememberTurn(query, answer) {
-  state.history.push(
+  const session = currentSession();
+  session.history.push(
     { role: "user", text: query.slice(0, MAX_SAVED_MESSAGE_LENGTH) },
     { role: "assistant", text: answer.slice(0, MAX_SAVED_MESSAGE_LENGTH) },
   );
-  state.history = state.history.slice(-MAX_SAVED_MESSAGES);
-  saveChatMemory();
+  session.history = session.history.slice(-MAX_SAVED_MESSAGES);
+  if (!session.title) session.title = query.replace(/\s+/g, " ").trim().slice(0, 24) || "新对话";
+  session.updatedAt = Date.now();
+  sessionStore.sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+  persistSessions();
 }
 
 function restoreChat() {
-  if (!state.history.length) return;
+  const session = currentSession();
+  if (!session.history.length) return;
   messages.replaceChildren();
-  state.history.forEach(({ role, text }) => addMessage(role, text));
+  session.history.forEach(({ role, text }) => addMessage(role, text));
 }
 
-function clearChatMemory() {
-  if (state.busy || !window.confirm("清空当前设备上的聊天记录并开始新对话？")) return;
-  state.conversationId = "";
-  state.history = [];
-  localStorage.removeItem(CHAT_MEMORY_KEY);
+function startNewSession() {
+  sessionStore.activeId = "";
+  persistSessions();
+  currentSession();
   messages.replaceChildren(welcomeMessage.cloneNode(true));
 }
 
+function deleteSession(id) {
+  const index = sessionStore.sessions.findIndex((session) => session.id === id);
+  if (index < 0) return;
+  sessionStore.sessions.splice(index, 1);
+  if (sessionStore.activeId === id) {
+    sessionStore.activeId = sessionStore.sessions[0]?.id || "";
+    persistSessions();
+    messages.replaceChildren(welcomeMessage.cloneNode(true));
+    restoreChat();
+  } else {
+    persistSessions();
+  }
+  renderHistoryList();
+}
+
+function switchSession(id) {
+  if (sessionStore.activeId === id) {
+    closePanels();
+    return;
+  }
+  sessionStore.activeId = id;
+  persistSessions();
+  messages.replaceChildren(welcomeMessage.cloneNode(true));
+  restoreChat();
+  renderHistoryList();
+  closePanels();
+}
+
+function formatSessionTime(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return sameDay ? time : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function renderHistoryList() {
+  historyList.replaceChildren();
+  if (!sessionStore.sessions.length) {
+    const empty = document.createElement("li");
+    empty.className = "history-empty";
+    empty.textContent = "还没有历史对话";
+    historyList.append(empty);
+    return;
+  }
+  [...sessionStore.sessions]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .forEach((session) => {
+      const item = document.createElement("li");
+      if (session.id === sessionStore.activeId) item.classList.add("active");
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "history-item-main";
+      const title = document.createElement("span");
+      title.className = "history-item-title";
+      title.textContent = session.title || "未命名对话";
+      const time = document.createElement("span");
+      time.className = "history-item-time";
+      time.textContent = formatSessionTime(session.updatedAt);
+      main.append(title, time);
+      main.addEventListener("click", () => switchSession(session.id));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "history-item-delete";
+      remove.textContent = "删除";
+      remove.setAttribute("aria-label", `删除对话：${session.title || "未命名对话"}`);
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteSession(session.id);
+      });
+      item.append(main, remove);
+      historyList.append(item);
+    });
+}
+
+function closePanels() {
+  historyPanel.classList.add("hidden");
+  locationPanel.classList.add("hidden");
+}
+
+function togglePanel(panel) {
+  const willOpen = panel.classList.contains("hidden");
+  closePanels();
+  if (willOpen) {
+    panel.classList.remove("hidden");
+    if (panel === historyPanel) renderHistoryList();
+    if (panel === locationPanel) {
+      placeSearchInput.focus();
+      if (!placeSearchResults.childElementCount) renderPlaceSuggestions([]);
+    }
+  }
+}
+
 restoreChat();
+
+function applyManualPlace(place) {
+  state.position = {
+    longitude: place.longitude,
+    latitude: place.latitude,
+    coordinate_system: "autonavi",
+    name: place.name,
+  };
+  locationButton.className = "location-button ready";
+  locationLabel.textContent = place.name.length > 10 ? `${place.name.slice(0, 10)}…` : place.name;
+  closePanels();
+}
 
 function locate() {
   locationButton.className = "location-button";
@@ -163,6 +336,7 @@ function locate() {
         longitude: coords.longitude,
         latitude: coords.latitude,
         accuracy: coords.accuracy,
+        coordinate_system: "gps",
       };
       locationButton.classList.add("ready");
       locationLabel.textContent = `已定位 · ±${Math.round(coords.accuracy)}m`;
@@ -177,7 +351,7 @@ function locate() {
 }
 
 function handleEvent(event) {
-  if (event.conversation_id) state.conversationId = event.conversation_id;
+  if (event.conversation_id) currentSession().conversationId = event.conversation_id;
   if (["message", "agent_message"].includes(event.event) && event.answer) return event.answer;
   if (event.event === "workflow_finished" && event.data?.status === "failed") {
     throw new Error(event.data.error || "Dify 工作流执行失败");
@@ -217,9 +391,15 @@ async function sendQuery(query) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
-        ...(state.position || {}),
-        coordinate_system: "gps",
-        conversation_id: state.conversationId,
+        ...(state.position
+          ? {
+              longitude: state.position.longitude,
+              latitude: state.position.latitude,
+              ...(state.position.accuracy ? { accuracy: state.position.accuracy } : {}),
+              coordinate_system: state.position.coordinate_system || "gps",
+            }
+          : {}),
+        conversation_id: currentSession().conversationId,
         user: state.user,
       }),
     });
@@ -263,6 +443,7 @@ async function sendQuery(query) {
     sendButton.disabled = false;
     clearChatButton.disabled = false;
     voiceButton.disabled = false;
+    persistSessions();
     input.focus();
   }
 }
@@ -408,12 +589,101 @@ input.addEventListener("keydown", (event) => {
 document.querySelectorAll("[data-prompt]").forEach((button) => {
   button.addEventListener("click", () => sendQuery(button.dataset.prompt));
 });
+function renderPlaceSuggestions(tips, message = "") {
+  placeSearchResults.replaceChildren();
+  if (message) {
+    const empty = document.createElement("li");
+    empty.className = "place-empty";
+    empty.textContent = message;
+    placeSearchResults.append(empty);
+    return;
+  }
+  if (!tips.length) {
+    const empty = document.createElement("li");
+    empty.className = "place-empty";
+    empty.textContent = "输入地点名称开始搜索";
+    placeSearchResults.append(empty);
+    return;
+  }
+  tips.forEach((tip) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "place-item";
+    const name = document.createElement("span");
+    name.className = "place-name";
+    name.textContent = tip.name;
+    const address = document.createElement("span");
+    address.className = "place-address";
+    address.textContent = tip.address || tip.district || "";
+    button.append(name, address);
+    button.addEventListener("click", () => applyManualPlace(tip));
+    item.append(button);
+    placeSearchResults.append(item);
+  });
+}
+
+let placeSearchTimer = null;
+let placeSearchSeq = 0;
+
+async function searchPlaces(keyword) {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    renderPlaceSuggestions([]);
+    return;
+  }
+  const seq = ++placeSearchSeq;
+  try {
+    const response = await fetch(`/api/place-search?query=${encodeURIComponent(trimmed.slice(0, 50))}`, {
+      headers: { "X-NearbyGo-User": state.user },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (seq !== placeSearchSeq) return;
+    if (!response.ok) {
+      renderPlaceSuggestions([], payload.detail || `搜索失败（${response.status}）`);
+      return;
+    }
+    renderPlaceSuggestions(Array.isArray(payload.tips) ? payload.tips : []);
+  } catch {
+    if (seq === placeSearchSeq) renderPlaceSuggestions([], "搜索失败，请检查网络");
+  }
+}
+
+placeSearchInput.addEventListener("input", () => {
+  window.clearTimeout(placeSearchTimer);
+  placeSearchTimer = window.setTimeout(() => searchPlaces(placeSearchInput.value), 350);
+});
+
+placeSearchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    window.clearTimeout(placeSearchTimer);
+    searchPlaces(placeSearchInput.value);
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#locationPanel, #locationButton, #historyPanel, #historyButton")) return;
+  closePanels();
+});
+
 messages.addEventListener("click", (event) => {
   const link = event.target.closest("a[data-amap-navigation]");
   if (!link || !/MicroMessenger/i.test(navigator.userAgent)) return;
   window.alert("微信内可能无法直接唤起高德 App；若停留在当前页，请使用右上角菜单选择“在浏览器打开”。");
 });
-locationButton.addEventListener("click", locate);
-clearChatButton.addEventListener("click", clearChatMemory);
+historyButton.addEventListener("click", () => togglePanel(historyPanel));
+closeHistoryButton.addEventListener("click", closePanels);
+newChatButton.addEventListener("click", () => {
+  startNewSession();
+  renderHistoryList();
+});
+locationButton.addEventListener("click", () => togglePanel(locationPanel));
+closeLocationButton.addEventListener("click", closePanels);
+useBrowserLocationButton.addEventListener("click", () => {
+  closePanels();
+  locate();
+});
+clearChatButton.addEventListener("click", startNewSession);
 voiceButton.addEventListener("click", toggleRecording);
 locate();

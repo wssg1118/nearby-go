@@ -4,6 +4,7 @@ import json
 import hashlib
 import hmac
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode, urljoin, urlparse
@@ -88,6 +89,14 @@ def _verified_route_points(
     return points
 
 
+def _serialize_points(points: list[tuple[float, float]]) -> str:
+    return ";".join(f"{lng:.6f},{lat:.6f}" for lng, lat in points)
+
+
+def _sign_payload(value: str, secret: str) -> str:
+    return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def _route_map_path(payload: RecommendationResponse, secret: str) -> str | None:
     if not secret or not payload.places:
         return None
@@ -97,19 +106,28 @@ def _route_map_path(payload: RecommendationResponse, secret: str) -> str | None:
     # 优先使用每段高德实际路线的 polyline；未取得路线的路段退回直线示意。
     coordinates = [origin]
     current = origin
+    markers = [origin]
     for place, segment in legs:
         end = (place.longitude, place.latitude)
         leg = _parse_polyline(segment.route_polyline or "")
         leg = _downsample(leg, leg_cap) if len(leg) >= 2 else [current, end]
         coordinates.extend(leg[1:])
+        markers.append(end)
         current = leg[-1]
     if len(coordinates) < 2:
         return None
-    serialized = ";".join(f"{lng:.6f},{lat:.6f}" for lng, lat in coordinates)
-    signature = hmac.new(
-        secret.encode("utf-8"), serialized.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-    return f"/api/route-map?{urlencode({'points': serialized, 'sig': signature})}"
+    # 高德静态地图 markers 上限 10 个：只标注起点与推荐地点，polyline 点仅进 paths。
+    markers = markers[:10]
+    serialized_points = _serialize_points(coordinates)
+    serialized_markers = _serialize_points(markers)
+    return "/api/route-map?" + urlencode(
+        {
+            "points": serialized_points,
+            "sig": _sign_payload(serialized_points, secret),
+            "markers": serialized_markers,
+            "msig": _sign_payload(serialized_markers, secret),
+        }
+    )
 
 
 def _safe_markdown_text(value: object, limit: int = 80) -> str:
@@ -132,7 +150,7 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
             blocks.extend(
                 [
                     "## 高德位置概览",
-                    f"![附近候选与实际路线示意]({map_url})",
+                    f"![map:附近候选与实际路线示意]({map_url})",
                     "> 地图已按高德实际路线绘制；未取得路线的路段以直线示意，导航请以高德 App 实时路线为准。",
                 ]
             )
@@ -186,22 +204,22 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
 
     places = payload.get("places") if isinstance(payload.get("places"), list) else []
     photos: list[str] = []
-    for place in places:
+    for index, place in enumerate(places, start=1):
         if not isinstance(place, dict):
             continue
         name = _safe_markdown_text(place.get("name"), 30) or "附近地点"
         image_urls = place.get("image_urls") if isinstance(place.get("image_urls"), list) else []
-        for raw_url in image_urls[:1]:
-            try:
-                parsed = urlparse(str(raw_url))
-            except ValueError:
-                continue
-            if parsed.scheme == "https" and parsed.netloc:
-                photos.append(f"![{name}]({parsed.geturl()})")
-        if len(photos) >= 3:
-            break
+        if not image_urls:
+            continue
+        raw_url = str(image_urls[0])
+        try:
+            parsed = urlparse(raw_url)
+        except ValueError:
+            continue
+        if parsed.scheme == "https" and parsed.netloc:
+            photos.append(f"![{index}·{name}]({parsed.geturl()})")
     if photos:
-        blocks.extend(["### 地点图片", *photos[:3]])
+        blocks.extend(["### 推荐地点图片", *photos])
     return "\n\n".join(blocks)
 
 
@@ -287,23 +305,92 @@ async def audio_to_text(
     return {"text": text}
 
 
+_PLACE_SEARCH_LIMIT = 30
+_PLACE_SEARCH_WINDOW_SECONDS = 60.0
+_place_search_hits: dict[str, list[float]] = {}
+
+
+def _check_place_search_rate(user: str) -> None:
+    now = time.monotonic()
+    hits = [t for t in _place_search_hits.get(user, []) if now - t < _PLACE_SEARCH_WINDOW_SECONDS]
+    if len(hits) >= _PLACE_SEARCH_LIMIT:
+        raise HTTPException(status_code=429, detail="搜索太频繁，请稍后再试")
+    hits.append(now)
+    _place_search_hits[user] = hits
+
+
+@app.get("/api/place-search")
+async def place_search(
+    query: str,
+    request: Request,
+    user: str = Header(default="", alias="X-NearbyGo-User"),
+    config: Settings = Depends(get_settings),
+) -> dict[str, list[dict[str, object]]]:
+    if not user or len(user) > 128:
+        raise HTTPException(status_code=400, detail="无效的用户标识")
+    keyword = query.strip()[:50]
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请输入地点关键词")
+    if not config.amap_web_service_key:
+        raise HTTPException(status_code=503, detail="高德地图尚未配置")
+    _check_place_search_rate(user)
+    amap = AmapClient(request.app.state.http, config.amap_web_service_key)
+    try:
+        payload = await amap._get(
+            "/v3/assistant/inputtips", {"keywords": keyword, "datatype": "poi"}
+        )
+    except AmapError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    tips: list[dict[str, object]] = []
+    for tip in (payload.get("tips") or [])[:8]:
+        location = str(tip.get("location") or "")
+        if location.count(",") != 1:
+            continue
+        try:
+            lng_text, lat_text = location.split(",", maxsplit=1)
+            longitude, latitude = float(lng_text), float(lat_text)
+        except ValueError:
+            continue
+        name = str(tip.get("name") or "").strip()
+        if not name:
+            continue
+        district = str(tip.get("district") or "").strip()
+        address = str(tip.get("address") or "").strip()
+        tips.append(
+            {
+                "name": name[:60],
+                "district": district[:40],
+                "address": (address or district)[:80],
+                "longitude": round(longitude, 6),
+                "latitude": round(latitude, 6),
+            }
+        )
+    return {"tips": tips}
+
+
 @app.get("/api/route-map")
 async def route_map(
     points: str,
     sig: str,
     request: Request,
+    markers: str = "",
+    msig: str = "",
     config: Settings = Depends(get_settings),
 ) -> Response:
     verified = _verified_route_points(points, sig, config.internal_api_token)
     if not config.amap_web_service_key:
         raise HTTPException(status_code=503, detail="高德地图尚未配置")
-    origin = verified[0]
-    destinations = verified[1:]
-    marker_groups = [f"mid,0x14532D,A:{origin[0]:.6f},{origin[1]:.6f}"]
-    for index, (longitude, latitude) in enumerate(destinations, start=1):
-        marker_groups.append(
-            f"mid,0xFC6054,{index}:{longitude:.6f},{latitude:.6f}"
-        )
+    # 高德静态地图 markers 上限 10 个；未传 markers 时仅标注起点。
+    if markers and msig:
+        marker_points = _verified_route_points(markers, msig, config.internal_api_token)[:10]
+    else:
+        marker_points = verified[:1]
+    marker_groups = []
+    for index, (longitude, latitude) in enumerate(marker_points):
+        if index == 0:
+            marker_groups.append(f"mid,0x14532D,A:{longitude:.6f},{latitude:.6f}")
+        else:
+            marker_groups.append(f"mid,0xFC6054,{index}:{longitude:.6f},{latitude:.6f}")
     params = {
         "key": config.amap_web_service_key,
         "size": "750*420",

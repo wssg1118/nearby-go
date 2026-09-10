@@ -1,11 +1,17 @@
 import hashlib
 import hmac
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import HTTPException
 
-from app.main import _travel_cards, _verified_route_points
+from app.main import _route_map_path, _travel_cards, _verified_route_points
+from app.models import (
+    ItinerarySegment,
+    PlaceRecommendation,
+    RecommendationResponse,
+)
 
 
 def test_route_map_signature_limits_coordinates_without_exposing_secret():
@@ -21,6 +27,66 @@ def test_route_map_signature_limits_coordinates_without_exposing_secret():
     ]
     with pytest.raises(HTTPException):
         _verified_route_points(points, "bad-signature", secret)
+
+
+def _recommendation_response(leg_count: int = 2) -> RecommendationResponse:
+    places = [
+        PlaceRecommendation(
+            poi_id=str(index),
+            name=f"地点{index}",
+            category="美食",
+            address="测试地址",
+            longitude=116.330 + index * 0.01,
+            latitude=40.000 + index * 0.01,
+            score=90.0,
+            navigation_url="https://uri.amap.com/navigation?to=1",
+        )
+        for index in range(1, leg_count + 1)
+    ]
+    itinerary = [
+        ItinerarySegment(
+            day_number=1,
+            sequence=index,
+            from_name="当前位置",
+            to_name=f"地点{index}",
+            transport="walking",
+            route_status="available",
+            planning_duration_minutes=10,
+            route_polyline="116.326000,40.003000;116.327000,40.004000;116.328000,40.005000",
+        )
+        for index in range(1, leg_count + 1)
+    ]
+    return RecommendationResponse(
+        origin={"longitude": 116.326, "latitude": 40.003},
+        transport="walking",
+        radius_meters=1000,
+        places=places,
+        itinerary=itinerary,
+    )
+
+
+def test_route_map_path_separates_markers_from_polyline_points():
+    payload = _recommendation_response(leg_count=9)
+    path = _route_map_path(payload, "test-secret")
+
+    assert path and path.startswith("/api/route-map?")
+    query = parse_qs(urlparse(path).query)
+    points = _verified_route_points(query["points"][0], query["sig"][0], "test-secret")
+    markers = _verified_route_points(query["markers"][0], query["msig"][0], "test-secret")
+
+    # markers 只包含起点和每个推荐地点（高德静态地图上限 10 个）
+    assert markers[0] == (116.326, 40.003)
+    assert len(markers) == 10
+    assert len(points) >= len(markers)
+    # 路径点必须以实际 polyline 采样点为主体，而不是每个点都是标记
+    assert len(points) > 10
+
+
+def test_route_map_path_requires_secret_and_places():
+    assert _route_map_path(_recommendation_response(), "") is None
+    payload = _recommendation_response()
+    payload.places = []
+    assert _route_map_path(payload, "test-secret") is None
 
 
 def test_mcp_visual_cards_include_map_transport_and_only_https_images():
@@ -56,8 +122,12 @@ def test_mcp_visual_cards_include_map_transport_and_only_https_images():
     cards = _travel_cards(json.dumps(payload, ensure_ascii=False), "https://guide.example.com")
 
     assert "https://guide.example.com/api/route-map?" in cards
-    assert "实际路线" in cards
+    assert "![map:附近候选与实际路线示意]" in cards
     assert "🚶 步行" in cards
+    assert "### 推荐地点图片" in cards
+    # 图片与推荐一一对应：编号·名称，坏图被跳过
+    assert "![1·测试" in cards
+    assert "![2·坏图]" not in cards
     assert "https://store.is.autonavi.com/photo.jpg" in cards
     assert "javascript:" not in cards
     assert "其他候选" in cards
