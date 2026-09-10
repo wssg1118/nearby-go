@@ -97,3 +97,22 @@ test("renders comparison tables with safe links and stops at non-table lines", (
   // 缺分隔行的孤立管道行按段落处理，不再并入表格
   assert.match(html, /<p>/);
 });
+
+test("renders LLM pipe tables that miss the divider row and pads uneven columns", () => {
+  const html = renderMarkdown(
+    [
+      "### 对比一览",
+      "| 排名 | 推荐 | 评分 | 人均 |",
+      "| 1 | 清芬园 | 4.7 | 45元 |",
+      "| 2 | 七港九 | 4.5 | 38元 |",
+      "",
+      "后续普通文本 | 含一个管道也不算表",
+    ].join("\n"),
+  );
+
+  assert.match(html, /<div class="table-wrap"><table>/);
+  assert.match(html, /<th>排名<\/th><th>推荐<\/th><th>评分<\/th><th>人均<\/th>/);
+  assert.match(html, /<td>2<\/td><td>七港九<\/td>/);
+  assert.match(html, /<p>后续普通文本 \| 含一个管道也不算表<\/p>/);
+  assert.ok(!html.includes("clear"));
+});

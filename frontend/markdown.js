@@ -96,6 +96,11 @@
     return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(String(line || "")) && String(line).includes("-") && String(line).includes("|");
   }
 
+  function isTableRow(line) {
+    const text = String(line || "").trim();
+    return text.includes("|") && text.split("|").filter((cell) => cell.trim()).length >= 2 && !isTableDivider(text);
+  }
+
   function blockType(line, nextLine) {
     if (/^#{1,6}[ \t]+/.test(line)) return "heading";
     if (/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/.test(line)) return "horizontal_rule";
@@ -106,19 +111,24 @@
     return "paragraph";
   }
 
-  function renderTable(lines, index) {
+  function renderTable(lines, index, dataOffset) {
     const header = splitTableRow(lines[index]);
-    index += 2;
+    let cursor = index + dataOffset;
     const rows = [];
-    while (index < lines.length && lines[index].trim().includes("|")) {
-      rows.push(splitTableRow(lines[index]));
-      index += 1;
+    while (cursor < lines.length && isTableRow(lines[cursor])) {
+      rows.push(splitTableRow(lines[cursor]));
+      cursor += 1;
     }
-    const head = `<thead><tr>${header.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead>`;
+    const columnCount = Math.max(header.length, ...rows.map((row) => row.length), 1);
+    const paddedHeader = Array.from({ length: columnCount }, (_, cellIndex) => header[cellIndex] || "");
+    const head = `<thead><tr>${paddedHeader.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead>`;
     const body = `<tbody>${rows
-      .map((row) => `<tr>${header.map((_, cellIndex) => `<td>${renderInline(row[cellIndex] || "")}</td>`).join("")}</tr>`)
+      .map((row) => {
+        const cells = Array.from({ length: columnCount }, (_, cellIndex) => row[cellIndex] || "");
+        return `<tr>${cells.map((cell) => `<td>${renderInline(cell)}</td>`).join("")}</tr>`;
+      })
       .join("")}</tbody>`;
-    return { html: `<div class="table-wrap"><table>${head}${body}</table></div>`, next: index };
+    return { html: `<div class="table-wrap"><table>${head}${body}</table></div>`, next: cursor };
   }
 
   function renderMarkdown(value) {
@@ -135,7 +145,19 @@
 
       const kind = blockType(line, lines[index + 1]);
       if (kind === "table") {
-        const table = renderTable(lines, index);
+        const table = renderTable(lines, index, 2);
+        blocks.push(table.html);
+        index = table.next;
+        continue;
+      }
+      // LLM 输出的表格可能缺 "| --- |" 分隔行：连续两行管道文本按表格渲染
+      if (
+        kind === "paragraph" &&
+        isTableRow(line) &&
+        index + 1 < lines.length &&
+        isTableRow(lines[index + 1])
+      ) {
+        const table = renderTable(lines, index, 1);
         blocks.push(table.html);
         index = table.next;
         continue;

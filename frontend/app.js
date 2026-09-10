@@ -174,8 +174,16 @@ function stripStreamingData(text) {
 function renderAnswerBubble(bubble, text) {
   const { data, text: clean } = extractAnswerData(text);
   bubble.innerHTML = formatAnswer(clean);
-  enhancePlaceCards(bubble, data);
-  decorateThumbs(bubble);
+  try {
+    enhancePlaceCards(bubble, data);
+  } catch {
+    // 增强失败时保留原始 markdown 渲染结果，不阻塞回答展示
+  }
+  try {
+    decorateThumbs(bubble);
+  } catch {
+    // 同上，缩略图徽标失败不阻塞
+  }
 }
 
 function placeChips(place) {
@@ -296,9 +304,10 @@ function enhancePlaceCards(bubble, data) {
   const places = data && Array.isArray(data.places) ? data.places : [];
   const transport = data && typeof data.transport === "string" ? data.transport : "walking";
   const isCardHead = (el) =>
-    el.tagName === "H3" && /^\d+\s*[·.、]\s*\S/.test(el.textContent.trim());
+    el.tagName === "H3" &&
+    /^(?:推荐)?\s*[①②③④⑤0-9]{1,2}\s*[·.、:：]?\s*\S/.test(el.textContent.trim());
   const isFoldHead = (el) =>
-    el.tagName === "H3" && /^(对比一览|其他候选)\s*$/.test(el.textContent.trim());
+    el.tagName === "H3" && /^(对比一览|其他候选)/.test(el.textContent.trim());
 
   const children = [...bubble.children];
   const firstIndex = children.findIndex((el) => isCardHead(el) || isFoldHead(el));
