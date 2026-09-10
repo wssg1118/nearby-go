@@ -1712,7 +1712,7 @@ workflow:
                   else:
                       unmatched.append(photo_line)
               if unmatched:
-                  lines.extend(['', '### 推荐地点图片'] + unmatched)
+                  lines.extend([''] + unmatched)
               return {'final_answer': '\n'.join(lines) + ('\n\n' + cards if cards else '')}
         code_language: python3
         desc: 把每个推荐的图片插入到对应导航链接所在行之后，再拼接地图与路线卡片

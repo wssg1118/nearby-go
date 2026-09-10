@@ -317,10 +317,11 @@ function enhancePlaceCards(bubble, data) {
   for (const el of children.slice(firstIndex)) {
     if (isCardHead(el) || isFoldHead(el)) {
       groups.push({ head: el, body: [] });
-    } else if (!["H2", "HR"].includes(el.tagName)) {
+    } else if (["H2", "HR"].includes(el.tagName)) {
+      // H2/HR 是区块分隔（如"高德位置概览"在决策卡之后）：保留原位，不终止后续折叠
+      continue;
+    } else if (groups.length) {
       groups[groups.length - 1].body.push(el);
-    } else {
-      break;
     }
   }
 

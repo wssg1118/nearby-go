@@ -336,7 +336,7 @@ def _inject_place_photos(explain_text: str, visual_cards: str, photos: list[dict
         else:
             unmatched.append(photo_line)
     if unmatched:
-        lines.extend(["", "### 推荐地点图片", *unmatched])
+        lines.extend(["", *unmatched])
     cards = visual_cards.strip()
     return "\n".join(lines) + (f"\n\n{cards}" if cards else "")
 
