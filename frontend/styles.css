@@ -312,7 +312,7 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
 
 .composer {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr auto;
   align-items: end;
   gap: 10px;
   border: 1px solid var(--line);
