@@ -663,7 +663,7 @@ workflow:
                       radius = int(travel_match.group(2)) * meters_per_minute
                   else:
                       radius = 3000
-              radius = min(10000, max(100, radius))
+              radius = min(30000, max(100, radius))
 
               duration_number = as_number(duration_minutes)
               duration = int(duration_number) if duration_number else None

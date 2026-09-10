@@ -14,7 +14,7 @@ class ChatRequest(BaseModel):
     accuracy: float | None = Field(default=None, ge=0)
     coordinate_system: CoordinateSystem = "gps"
     position_name: str = Field(default="", max_length=80)
-    radius_meters: int | None = Field(default=None, ge=100, le=10000)
+    radius_meters: int | None = Field(default=None, ge=100, le=30000)
     conversation_id: str = ""
     user: str = Field(min_length=1, max_length=128)
 
@@ -27,7 +27,7 @@ class RecommendationRequest(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     preferences: list[str] = Field(default_factory=list)
     budget_per_person: float | None = Field(default=None, ge=0, le=100000)
-    radius_meters: int = Field(default=3000, ge=100, le=10000)
+    radius_meters: int = Field(default=3000, ge=100, le=30000)
     transport: TransportMode = "walking"
     result_count: int = Field(default=3, ge=1, le=20)
     duration_minutes: int | None = Field(default=None, ge=15, le=10080)
