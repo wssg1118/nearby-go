@@ -85,13 +85,40 @@
     return output;
   }
 
-  function blockType(line) {
+  function splitTableRow(line) {
+    let text = String(line || "").trim();
+    if (text.startsWith("|")) text = text.slice(1);
+    if (text.endsWith("|")) text = text.slice(0, -1);
+    return text.split("|").map((cell) => cell.trim());
+  }
+
+  function isTableDivider(line) {
+    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(String(line || "")) && String(line).includes("-") && String(line).includes("|");
+  }
+
+  function blockType(line, nextLine) {
     if (/^#{1,6}[ \t]+/.test(line)) return "heading";
     if (/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/.test(line)) return "horizontal_rule";
     if (/^>[ \t]?/.test(line)) return "quote";
     if (/^[ \t]*[-+*][ \t]+/.test(line)) return "unordered";
     if (/^[ \t]*\d+\.[ \t]+/.test(line)) return "ordered";
+    if (line.includes("|") && nextLine !== undefined && isTableDivider(nextLine)) return "table";
     return "paragraph";
+  }
+
+  function renderTable(lines, index) {
+    const header = splitTableRow(lines[index]);
+    index += 2;
+    const rows = [];
+    while (index < lines.length && lines[index].trim().includes("|")) {
+      rows.push(splitTableRow(lines[index]));
+      index += 1;
+    }
+    const head = `<thead><tr>${header.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead>`;
+    const body = `<tbody>${rows
+      .map((row) => `<tr>${header.map((_, cellIndex) => `<td>${renderInline(row[cellIndex] || "")}</td>`).join("")}</tr>`)
+      .join("")}</tbody>`;
+    return { html: `<div class="table-wrap"><table>${head}${body}</table></div>`, next: index };
   }
 
   function renderMarkdown(value) {
@@ -106,7 +133,13 @@
         continue;
       }
 
-      const kind = blockType(line);
+      const kind = blockType(line, lines[index + 1]);
+      if (kind === "table") {
+        const table = renderTable(lines, index);
+        blocks.push(table.html);
+        index = table.next;
+        continue;
+      }
       if (kind === "heading") {
         const match = line.match(/^(#{1,6})[ \t]+(.+?)\s*$/);
         if (!match) {
@@ -150,7 +183,11 @@
       }
 
       const paragraph = [];
-      while (index < lines.length && lines[index].trim() && blockType(lines[index]) === "paragraph") {
+      while (
+        index < lines.length &&
+        lines[index].trim() &&
+        blockType(lines[index], lines[index + 1]) === "paragraph"
+      ) {
         paragraph.push(renderInline(lines[index]));
         index += 1;
       }

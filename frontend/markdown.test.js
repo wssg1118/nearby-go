@@ -76,3 +76,24 @@ test("marks map: prefixed image alt text as a large map visual", () => {
   assert.match(html, /alt="附近候选与实际路线示意"/);
   assert.ok(!html.includes("map:"));
 });
+
+test("renders comparison tables with safe links and stops at non-table lines", () => {
+  const html = renderMarkdown(
+    [
+      "### 对比一览",
+      "| 排名 | 推荐 | 评分 |",
+      "| --- | --- | --- |",
+      "| 1 | [清芬园](https://uri.amap.com/navigation?to=p1) | 4.7 |",
+      "| 2 | [坏店](javascript:alert(1)) | - |",
+      "",
+      "| 3 | 这行不是表格分隔行后的表 |",
+    ].join("\n"),
+  );
+
+  assert.match(html, /<div class="table-wrap"><table>/);
+  assert.match(html, /<th>排名<\/th><th>推荐<\/th><th>评分<\/th>/);
+  assert.match(html, /<td>1<\/td><td><a href="https:\/\/uri\.amap\.com\/navigation\?to=p1"[^>]*>清芬园<\/a><\/td><td>4\.7<\/td>/);
+  assert.ok(!html.includes('href="javascript:'));
+  // 缺分隔行的孤立管道行按段落处理，不再并入表格
+  assert.match(html, /<p>/);
+});

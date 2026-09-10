@@ -1,7 +1,8 @@
 const LEGACY_CHAT_KEY = "nearbygo-chat-memory-v1";
 const SESSIONS_KEY = "nearbygo-sessions-v1";
+const RADIUS_KEY = "nearbygo-radius";
 const MAX_SAVED_MESSAGES = 24;
-const MAX_SAVED_MESSAGE_LENGTH = 6000;
+const MAX_SAVED_MESSAGE_LENGTH = 8000;
 const MAX_SAVED_SESSIONS = 30;
 
 function sanitizeHistory(history) {
@@ -106,6 +107,7 @@ function currentSession() {
 const state = {
   position: null,
   user: localStorage.getItem("nearbygo-user") || crypto.randomUUID(),
+  radius: localStorage.getItem(RADIUS_KEY) || "",
   busy: false,
 };
 localStorage.setItem("nearbygo-user", state.user);
@@ -133,6 +135,101 @@ const { escapeHtml, renderMarkdown } = window.NearbyGoMarkdown;
 
 function formatAnswer(value) {
   return renderMarkdown(value);
+}
+
+const DATA_COMMENT_PATTERN = /<!--NEARBYGO-DATA:([\s\S]*?)-->/g;
+
+function extractAnswerData(text) {
+  const source = String(text || "");
+  const match = source.match(/<!--NEARBYGO-DATA:([\s\S]*?)-->/);
+  let data = null;
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (parsed && typeof parsed === "object") data = parsed;
+    } catch {
+      data = null;
+    }
+  }
+  return { data, text: source.replace(DATA_COMMENT_PATTERN, "") };
+}
+
+function stripStreamingData(text) {
+  let result = String(text || "").replace(DATA_COMMENT_PATTERN, "");
+  const open = result.indexOf("<!--NEARBYGO-DATA:");
+  if (open >= 0) result = result.slice(0, open);
+  return result;
+}
+
+function renderAnswerBubble(bubble, text) {
+  const { data, text: clean } = extractAnswerData(text);
+  bubble.innerHTML = formatAnswer(clean);
+  enhancePlaceCards(bubble, data);
+  decorateThumbs(bubble);
+}
+
+function placeChips(place) {
+  if (!place || typeof place !== "object") return "";
+  const parts = [];
+  if (typeof place.rating === "number") parts.push(`★ ${place.rating.toFixed(1)}`);
+  if (typeof place.cost_per_person === "number") parts.push(`人均 ¥${Math.round(place.cost_per_person)}`);
+  if (typeof place.straight_distance_meters === "number") {
+    parts.push(`${Math.round(place.straight_distance_meters)}m`);
+  }
+  return parts.join(" · ");
+}
+
+function enhancePlaceCards(bubble, data) {
+  const children = [...bubble.children];
+  const places = data && Array.isArray(data.places) ? data.places : [];
+  const isCardHead = (el) =>
+    el.tagName === "H3" && /^\d+\s*[·.、]\s*\S/.test(el.textContent.trim());
+  if (!children.some(isCardHead)) return;
+
+  const groups = [];
+  for (const el of children) {
+    if (isCardHead(el)) {
+      groups.push({ head: el, body: [] });
+    } else if (groups.length && !["H2", "HR"].includes(el.tagName)) {
+      groups[groups.length - 1].body.push(el);
+    } else if (groups.length) {
+      break;
+    }
+  }
+  groups.forEach((group, groupIndex) => {
+    const details = document.createElement("details");
+    details.className = "place-card";
+    if (groupIndex === 0) details.open = true;
+    const summary = document.createElement("summary");
+    const number = parseInt(group.head.textContent.trim(), 10);
+    const place = Number.isInteger(number) ? places[number - 1] : null;
+    const title = document.createElement("span");
+    title.className = "place-card-title";
+    title.textContent = group.head.textContent.trim();
+    const chips = document.createElement("span");
+    chips.className = "place-card-chips";
+    chips.textContent = placeChips(place);
+    summary.append(title, chips);
+    const body = document.createElement("div");
+    body.className = "place-card-body";
+    group.body.forEach((el) => body.append(el));
+    details.append(summary, body);
+    group.head.replaceWith(details);
+  });
+}
+
+function decorateThumbs(bubble) {
+  bubble.querySelectorAll("img.answer-visual-thumb").forEach((img) => {
+    const match = String(img.alt || "").match(/^(\d+)\s*[·.、]\s*/);
+    if (!match || !img.parentElement || img.parentElement.classList.contains("thumb-wrap")) return;
+    const wrap = document.createElement("span");
+    wrap.className = "thumb-wrap";
+    const badge = document.createElement("b");
+    badge.className = "thumb-badge";
+    badge.textContent = match[1];
+    img.replaceWith(wrap);
+    wrap.append(badge, img);
+  });
 }
 
 function stripReasoning(value) {
@@ -176,7 +273,11 @@ function addMessage(role, text = "") {
   }
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.innerHTML = role === "assistant" ? formatAnswer(text) : `<p>${escapeHtml(text)}</p>`;
+  if (role === "assistant") {
+    renderAnswerBubble(bubble, text);
+  } else {
+    bubble.innerHTML = `<p>${escapeHtml(text)}</p>`;
+  }
   article.append(bubble);
   messages.append(article);
   messages.scrollTop = messages.scrollHeight;
@@ -419,6 +520,7 @@ async function sendQuery(query) {
               ...(state.position.name ? { position_name: state.position.name } : {}),
             }
           : {}),
+        ...(state.radius ? { radius_meters: Number(state.radius) } : {}),
         conversation_id: currentSession().conversationId,
         user: state.user,
       }),
@@ -440,7 +542,7 @@ async function sendQuery(query) {
         const progress = progressText(payload);
         if (progress && !rawAnswer) answerBubble.textContent = progress;
         rawAnswer += handleEvent(payload);
-        answer = stripReasoning(rawAnswer);
+        answer = stripStreamingData(stripReasoning(rawAnswer));
         if (answer) {
           answerBubble.classList.remove("typing");
           answerBubble.innerHTML = formatAnswer(answer);
@@ -449,11 +551,15 @@ async function sendQuery(query) {
       }
       if (done) break;
     }
-    if (!answer) {
+    const finalAnswer = stripReasoning(rawAnswer).trim();
+    if (!finalAnswer) {
       answerBubble.classList.remove("typing");
       answerBubble.innerHTML = "<p>暂时没有取得推荐，请稍后重试。</p>";
     } else {
-      rememberTurn(query, answer);
+      answerBubble.classList.remove("typing");
+      renderAnswerBubble(answerBubble, finalAnswer);
+      rememberTurn(query, finalAnswer);
+      messages.scrollTop = messages.scrollHeight;
     }
   } catch (error) {
     answerBubble.classList.remove("typing");
@@ -487,6 +593,23 @@ input.addEventListener("keydown", (event) => {
 document.querySelectorAll("[data-prompt]").forEach((button) => {
   button.addEventListener("click", () => sendQuery(button.dataset.prompt));
 });
+
+const radiusButtons = [...document.querySelectorAll(".radius-picker [data-radius]")];
+
+function refreshRadiusButtons() {
+  radiusButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.radius === state.radius);
+  });
+}
+
+radiusButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.radius = button.dataset.radius;
+    localStorage.setItem(RADIUS_KEY, state.radius);
+    refreshRadiusButtons();
+  });
+});
+refreshRadiusButtons();
 function renderPlaceSuggestions(tips, message = "") {
   placeSearchResults.replaceChildren();
   if (message) {

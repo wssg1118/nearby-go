@@ -305,6 +305,36 @@ def test_normalizer_routes_niche_business_terms_into_amap_keywords():
     assert "足疗" in body["keywords"]
 
 
+def test_normalizer_prefers_frontend_radius_and_generalizes_keywords():
+    dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
+    graph = dsl["workflow"]["graph"]
+    code_node = next(node for node in graph["nodes"] if node["id"] == "normalize")
+    namespace = {}
+    exec(code_node["data"]["code"], namespace)
+
+    output = namespace["main"](
+        query="附近奶茶",
+        longitude="116.326",
+        latitude="40.003",
+        coordinate_system="gps",
+        categories=["美食"],
+        keywords=[],
+        preferences=[],
+        budget_per_person=None,
+        radius_meters=None,
+        transport="walking",
+        duration_minutes=None,
+        duration_days=None,
+        front_radius_meters="800",
+    )
+    body = json.loads(output["request_body"])
+    # 前端选择的半径优先于查询文本与提取值
+    assert body["radius_meters"] == 800
+    # 泛化：奶茶扩展出同组词，扩大召回
+    assert "奶茶" in body["keywords"]
+    assert "茶饮" in body["keywords"]
+
+
 def test_normalizer_prioritizes_explicit_current_time_and_handles_missing_location():
     dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
     graph = dsl["workflow"]["graph"]
@@ -503,7 +533,12 @@ def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
 
     assert "https://guide.example.com/api/route-map?" in visual_cards
     assert "实际路线" in visual_cards
-    assert "🚶 步行" in visual_cards
+    # 路线摘要已移除，改为对比表格与前端交互数据注释
+    assert "路线摘要" not in visual_cards
+    assert "### 对比一览" in visual_cards
+    assert "| 1 | [测试](https://uri.amap.com/navigation?to=p1) |" in visual_cards
+    assert "700m · 10分钟" in visual_cards
+    assert "<!--NEARBYGO-DATA:" in visual_cards
     # 地点图片不再堆在卡片末尾，而是通过 place_photos 交给注入节点
     assert "推荐地点图片" not in visual_cards
     assert "javascript:" not in visual_cards

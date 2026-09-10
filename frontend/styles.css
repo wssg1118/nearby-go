@@ -206,6 +206,137 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   border-radius: 10px;
   object-fit: cover;
 }
+.thumb-wrap {
+  position: relative;
+  display: block;
+  width: fit-content;
+  margin: 6px auto 14px;
+  max-width: 100%;
+}
+.thumb-wrap .answer-visual-thumb {
+  margin: 0;
+  border: 1px solid var(--line);
+}
+.thumb-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #e23c30;
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  z-index: 1;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 8px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+}
+.bubble table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 380px;
+}
+.bubble th, .bubble td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.bubble th {
+  background: #e7efe6;
+  color: #2c4a39;
+  font-size: 12px;
+  font-weight: 800;
+}
+.bubble tbody tr:last-child td { border-bottom: 0; }
+.bubble tbody tr:hover { background: rgba(46, 139, 87, 0.05); }
+.bubble td .amap-navigation {
+  min-height: 0;
+  padding: 1px 2px;
+  border: 0;
+  background: transparent;
+}
+
+.place-card {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+}
+.place-card[open] { background: rgba(255, 255, 255, 0.85); }
+.place-card summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.place-card summary::-webkit-details-marker { display: none; }
+.place-card summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: #647369;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.place-card[open] summary::after { transform: rotate(180deg); }
+.place-card-title {
+  font-weight: 800;
+  color: #183c28;
+  font-size: 14px;
+}
+.place-card-chips {
+  margin-left: auto;
+  color: #577161;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.place-card-chips:not(:empty) + ::after { margin-left: 8px; }
+.place-card-body { padding: 2px 12px 10px; }
+.place-card-body > p:first-child { margin-top: 2px; }
+
+.radius-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.radius-label {
+  color: #577161;
+  font-size: 12px;
+  font-weight: 700;
+}
+.radius-picker button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(251, 250, 245, 0.76);
+  color: #3d5949;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.radius-picker button:hover { border-color: rgba(23, 107, 58, 0.35); background: #e1efe3; }
+.radius-picker button.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+  font-weight: 700;
+}
 .typing::after { content: "● ● ●"; color: #78917f; letter-spacing: 3px; animation: blink 1.2s infinite; }
 
 @keyframes blink { 50% { opacity: 0.35; } }

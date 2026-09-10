@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#14532d" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: https://*.autonavi.com https://*.amap.com; style-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'" />
     <title>附近发现 · NearbyGo</title>
-    <link rel="stylesheet" href="/styles.css?v=20260910-3" />
+    <link rel="stylesheet" href="/styles.css?v=20260910-4" />
   </head>
   <body>
     <main class="app-shell">
@@ -69,6 +69,14 @@
         <button type="button" data-prompt="帮我安排一个两天一夜的附近吃喝游玩攻略，每天约8小时">周末两日</button>
       </section>
 
+      <div class="radius-picker" role="group" aria-label="搜索半径">
+        <span class="radius-label">范围</span>
+        <button type="button" data-radius="" class="active">自动</button>
+        <button type="button" data-radius="800">800m</button>
+        <button type="button" data-radius="2000">2km</button>
+        <button type="button" data-radius="5000">5km</button>
+      </div>
+
       <form id="composer" class="composer">
         <textarea
           id="queryInput"
@@ -81,7 +89,7 @@
       </form>
       <p class="privacy-note">聊天记录仅保存在此设备浏览器，可随时清空；定位不保存。路线、价格和营业信息可能变化，请以商家及高德地图为准。</p>
     </main>
-    <script src="/markdown.js?v=20260910-3" defer></script>
-    <script src="/app.js?v=20260910-3" defer></script>
+    <script src="/markdown.js?v=20260910-4" defer></script>
+    <script src="/app.js?v=20260910-4" defer></script>
   </body>
 </html>

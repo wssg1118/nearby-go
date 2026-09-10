@@ -94,6 +94,7 @@ async def stream_chat(
             "location_accuracy": str(payload.accuracy or ""),
             "location_name": payload.position_name.strip()[:80],
             "fallback_location_name": settings.default_location_name,
+            "radius_meters": str(payload.radius_meters or ""),
         },
         "query": payload.query,
         "response_mode": "streaming",

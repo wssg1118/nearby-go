@@ -126,7 +126,12 @@ def test_mcp_visual_cards_include_map_transport_and_only_https_images():
 
     assert "https://guide.example.com/api/route-map?" in cards
     assert "![map:附近候选与实际路线示意]" in cards
-    assert "🚶 步行" in cards
+    # 路线摘要已移除，改为确定性对比表格与前端交互数据
+    assert "路线摘要" not in cards
+    assert "### 对比一览" in cards
+    assert "| 1 | [测试 （不可信）]" in cards
+    assert "800m · 12分钟" in cards
+    assert "<!--NEARBYGO-DATA:" in cards
     # 地点图片改为结构化输出，由注入节点插入到对应推荐下方
     assert "推荐地点图片" not in cards
     assert photos == [

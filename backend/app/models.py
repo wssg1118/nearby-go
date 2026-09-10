@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     accuracy: float | None = Field(default=None, ge=0)
     coordinate_system: CoordinateSystem = "gps"
     position_name: str = Field(default="", max_length=80)
+    radius_meters: int | None = Field(default=None, ge=100, le=10000)
     conversation_id: str = ""
     user: str = Field(min_length=1, max_length=128)
 

@@ -134,16 +134,18 @@ def _safe_markdown_text(value: object, limit: int = 80) -> str:
     return re.sub(r"[\[\]()`<>\r\n]+", " ", str(value or "")).strip()[:limit]
 
 
-def _travel_cards(raw_payload: str, public_base_url: str) -> str:
-    """Build deterministic map/photo cards without trusting POI text as Markdown."""
+def _travel_cards(raw_payload: str, public_base_url: str) -> tuple[str, list[dict[str, object]]]:
+    """Python mirror of the Dify map_cards node: map overview, comparison table,
+    one-liner candidates and an embedded NEARBYGO-DATA blob for the frontend."""
     try:
         payload = json.loads(raw_payload)
     except (TypeError, json.JSONDecodeError):
-        return ""
+        return "", []
     if not isinstance(payload, dict):
-        return ""
+        return "", []
     blocks: list[str] = []
     route_path = str(payload.get("route_map_path") or "")
+    map_url = ""
     if route_path.startswith("/api/route-map?"):
         map_url = urljoin(public_base_url.rstrip("/") + "/", route_path.lstrip("/"))
         if urlparse(map_url).scheme == "https":
@@ -155,23 +157,48 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
                 ]
             )
 
-    transport = "🚗 驾车" if payload.get("transport") == "driving" else "🚶 步行"
+    places = payload.get("places") if isinstance(payload.get("places"), list) else []
     itinerary = payload.get("itinerary") if isinstance(payload.get("itinerary"), list) else []
-    if itinerary:
-        summaries = []
-        for segment in itinerary[:6]:
-            if not isinstance(segment, dict):
-                continue
-            start = _safe_markdown_text(segment.get("from_name"), 30)
-            end = _safe_markdown_text(segment.get("to_name"), 30)
-            minutes = segment.get("route_duration_minutes") or segment.get("planning_duration_minutes")
+
+    def place_distance(place: dict[str, object], segment: object) -> str:
+        if isinstance(segment, dict):
             distance = segment.get("route_distance_meters")
-            detail = f"{minutes} 分钟" if isinstance(minutes, (int, float)) else "耗时待确认"
+            minutes = segment.get("route_duration_minutes") or segment.get(
+                "planning_duration_minutes"
+            )
+            if isinstance(distance, (int, float)) and isinstance(minutes, (int, float)):
+                return f"{round(distance)}m · {round(minutes)}分钟"
             if isinstance(distance, (int, float)):
-                detail += f"、{round(distance)} 米"
-            summaries.append(f"- {transport}：{start} → {end}（{detail}）")
-        if summaries:
-            blocks.extend(["### 路线摘要", *summaries])
+                return f"{round(distance)}m"
+        straight = place.get("straight_distance_meters")
+        if isinstance(straight, (int, float)):
+            return f"直线{round(straight)}m"
+        return "待确认"
+
+    table_rows: list[str] = []
+    for index, place in enumerate(places, start=1):
+        if not isinstance(place, dict):
+            continue
+        name = _safe_markdown_text(place.get("name"), 24) or "附近地点"
+        url = str(place.get("navigation_url") or "")
+        name_cell = f"[{name}]({url})" if url.startswith("https://uri.amap.com/") else name
+        rating = place.get("rating")
+        rating_cell = f"{round(rating, 1)}" if isinstance(rating, (int, float)) else "-"
+        cost = place.get("cost_per_person")
+        cost_cell = f"{round(cost)}元" if isinstance(cost, (int, float)) else "-"
+        segment = itinerary[index - 1] if index - 1 < len(itinerary) else None
+        table_rows.append(
+            f"| {index} | {name_cell} | {rating_cell} | {cost_cell} | {place_distance(place, segment)} |"
+        )
+    if table_rows:
+        blocks.extend(
+            [
+                "### 对比一览",
+                "| 排名 | 推荐 | 评分 | 人均 | 距离·时间 |",
+                "| --- | --- | --- | --- | --- |",
+                *table_rows,
+            ]
+        )
 
     additional = (
         payload.get("additional_places")
@@ -202,29 +229,65 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
     if one_liners:
         blocks.extend(["### 其他候选", *one_liners])
 
-    places = payload.get("places") if isinstance(payload.get("places"), list) else []
-    photos: list[dict[str, object]] = []
-    for index, place in enumerate(places, start=1):
-        if not isinstance(place, dict):
-            continue
-        name = _safe_markdown_text(place.get("name"), 30) or "附近地点"
-        image_urls = place.get("image_urls") if isinstance(place.get("image_urls"), list) else []
-        if not image_urls:
-            continue
-        raw_url = str(image_urls[0])
-        try:
-            parsed = urlparse(raw_url)
-        except ValueError:
-            continue
-        if parsed.scheme == "https" and parsed.netloc:
-            photos.append(
-                {
-                    "index": index,
-                    "name": name,
-                    "image_url": parsed.geturl(),
-                    "navigation_url": str(place.get("navigation_url") or ""),
-                }
-            )
+    def slim_place(place: dict[str, object], index: int) -> dict[str, object]:
+        urls = place.get("image_urls") if isinstance(place.get("image_urls"), list) else []
+        image_url = ""
+        if urls:
+            try:
+                parsed = urlparse(str(urls[0]))
+            except ValueError:
+                parsed = None
+            if parsed is not None and parsed.scheme == "https" and parsed.netloc:
+                image_url = parsed.geturl()
+        return {
+            "index": index,
+            "name": _safe_markdown_text(place.get("name"), 30) or "附近地点",
+            "category": _safe_markdown_text(
+                str(place.get("category") or "").split(";")[-1], 20
+            ),
+            "address": _safe_markdown_text(place.get("address"), 60),
+            "tags": [_safe_markdown_text(tag, 12) for tag in (place.get("tags") or [])][:4],
+            "rating": place.get("rating") if isinstance(place.get("rating"), (int, float)) else None,
+            "cost_per_person": (
+                place.get("cost_per_person") if isinstance(place.get("cost_per_person"), (int, float)) else None
+            ),
+            "straight_distance_meters": (
+                place.get("straight_distance_meters") if isinstance(place.get("straight_distance_meters"), (int, float)) else None
+            ),
+            "navigation_url": (
+                place.get("navigation_url") if str(place.get("navigation_url") or "").startswith("https://") else ""
+            ),
+            "image_url": image_url,
+        }
+
+    data_blob = {
+        "transport": payload.get("transport"),
+        "route_map_url": map_url,
+        "places": [
+            slim_place(place, index)
+            for index, place in enumerate(places, start=1)
+            if isinstance(place, dict)
+        ],
+        "additional_places": [
+            slim_place(place, index)
+            for index, place in enumerate(additional, start=1)
+            if isinstance(place, dict)
+        ],
+    }
+    blocks.append(
+        f'<!--NEARBYGO-DATA:{json.dumps(data_blob, ensure_ascii=False, separators=(",", ":"))}-->'
+    )
+
+    photos = [
+        {
+            "index": entry["index"],
+            "name": entry["name"],
+            "image_url": entry["image_url"],
+            "navigation_url": entry["navigation_url"],
+        }
+        for entry in data_blob["places"]
+        if isinstance(entry.get("image_url"), str) and entry["image_url"]
+    ]
     return "\n\n".join(blocks), photos
 
 
@@ -423,9 +486,9 @@ async def route_map(
     marker_groups = []
     for index, (longitude, latitude) in enumerate(marker_points):
         if index == 0:
-            marker_groups.append(f"mid,0x14532D,A:{longitude:.6f},{latitude:.6f}")
+            marker_groups.append(f"large,0x14532D,A:{longitude:.6f},{latitude:.6f}")
         else:
-            marker_groups.append(f"mid,0xFC6054,{index}:{longitude:.6f},{latitude:.6f}")
+            marker_groups.append(f"large,0xE23C30,{index}:{longitude:.6f},{latitude:.6f}")
     params = {
         "key": config.amap_web_service_key,
         "size": "750*420",
