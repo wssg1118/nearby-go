@@ -1,6 +1,7 @@
 const LEGACY_CHAT_KEY = "nearbygo-chat-memory-v1";
 const SESSIONS_KEY = "nearbygo-sessions-v1";
 const RADIUS_KEY = "nearbygo-radius";
+const SETTINGS_KEY = "nearbygo-settings-v1";
 const MAX_SAVED_MESSAGES = 24;
 const MAX_SAVED_MESSAGE_LENGTH = 8000;
 const MAX_SAVED_SESSIONS = 30;
@@ -130,6 +131,15 @@ const closeLocationButton = document.querySelector("#closeLocationPanel");
 const placeSearchInput = document.querySelector("#placeSearchInput");
 const placeSearchResults = document.querySelector("#placeSearchResults");
 const useBrowserLocationButton = document.querySelector("#useBrowserLocation");
+const settingsButton = document.querySelector("#settingsButton");
+const settingsPanel = document.querySelector("#settingsPanel");
+const closeSettingsButton = document.querySelector("#closeSettingsPanel");
+const prefInput = document.querySelector("#prefInput");
+const restrictInput = document.querySelector("#restrictInput");
+const transportSelect = document.querySelector("#transportSelect");
+const mobilitySelect = document.querySelector("#mobilitySelect");
+const vehicleSelect = document.querySelector("#vehicleSelect");
+const notesInput = document.querySelector("#notesInput");
 
 const { escapeHtml, renderMarkdown } = window.NearbyGoMarkdown;
 
@@ -179,41 +189,95 @@ function placeChips(place) {
   return parts.join(" · ");
 }
 
+function travelLine(place, transport) {
+  if (!place || typeof place.straight_distance_meters !== "number") return null;
+  const meters = Math.round(place.straight_distance_meters);
+  const driving = transport === "driving";
+  const speed = driving ? 500 : 80;
+  const minutes = Math.max(1, Math.round(meters / speed));
+  let suggestion;
+  if (driving) suggestion = `驾车约 ${minutes} 分钟`;
+  else if (meters <= 1000) suggestion = `步行约 ${minutes} 分钟即可`;
+  else if (meters <= 3000) suggestion = `步行约 ${minutes} 分钟，偏远可骑行或驾车`;
+  else suggestion = `步行较远（约 ${minutes} 分钟），建议骑行、驾车或公交`;
+  const line = document.createElement("p");
+  line.className = "travel-hint";
+  const label = document.createElement("b");
+  label.textContent = "到达方式：";
+  line.append(label, document.createTextNode(`直线约 ${meters} 米，${suggestion}。`));
+  if (place.navigation_url && String(place.navigation_url).startsWith("https://")) {
+    const link = document.createElement("a");
+    link.href = place.navigation_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.className = "travel-nav-link";
+    link.textContent = "高德规划路线";
+    line.append(document.createTextNode(" "), link);
+  }
+  return line;
+}
+
+function foldSection(heading, summaryLabel) {
+  const details = document.createElement("details");
+  details.className = "section-fold";
+  const summary = document.createElement("summary");
+  summary.textContent = summaryLabel || heading.textContent.trim();
+  const body = document.createElement("div");
+  body.className = "section-fold-body";
+  details.append(summary, body);
+  return details;
+}
+
 function enhancePlaceCards(bubble, data) {
-  const children = [...bubble.children];
   const places = data && Array.isArray(data.places) ? data.places : [];
+  const transport = data && typeof data.transport === "string" ? data.transport : "walking";
   const isCardHead = (el) =>
     el.tagName === "H3" && /^\d+\s*[·.、]\s*\S/.test(el.textContent.trim());
-  if (!children.some(isCardHead)) return;
+  const isFoldHead = (el) =>
+    el.tagName === "H3" && /^(对比一览|其他候选)\s*$/.test(el.textContent.trim());
+
+  const children = [...bubble.children];
+  const firstIndex = children.findIndex((el) => isCardHead(el) || isFoldHead(el));
+  if (firstIndex < 0) return;
 
   const groups = [];
-  for (const el of children) {
-    if (isCardHead(el)) {
+  for (const el of children.slice(firstIndex)) {
+    if (isCardHead(el) || isFoldHead(el)) {
       groups.push({ head: el, body: [] });
-    } else if (groups.length && !["H2", "HR"].includes(el.tagName)) {
+    } else if (!["H2", "HR"].includes(el.tagName)) {
       groups[groups.length - 1].body.push(el);
-    } else if (groups.length) {
+    } else {
       break;
     }
   }
+
   groups.forEach((group, groupIndex) => {
-    const details = document.createElement("details");
-    details.className = "place-card";
-    if (groupIndex === 0) details.open = true;
-    const summary = document.createElement("summary");
     const number = parseInt(group.head.textContent.trim(), 10);
     const place = Number.isInteger(number) ? places[number - 1] : null;
-    const title = document.createElement("span");
-    title.className = "place-card-title";
-    title.textContent = group.head.textContent.trim();
-    const chips = document.createElement("span");
-    chips.className = "place-card-chips";
-    chips.textContent = placeChips(place);
-    summary.append(title, chips);
-    const body = document.createElement("div");
-    body.className = "place-card-body";
-    group.body.forEach((el) => body.append(el));
-    details.append(summary, body);
+
+    let details;
+    if (isCardHead(group.head)) {
+      details = document.createElement("details");
+      details.className = "place-card";
+      if (groupIndex === 0) details.open = true;
+      const summary = document.createElement("summary");
+      const title = document.createElement("span");
+      title.className = "place-card-title";
+      title.textContent = group.head.textContent.trim();
+      const chips = document.createElement("span");
+      chips.className = "place-card-chips";
+      chips.textContent = placeChips(place);
+      summary.append(title, chips);
+      const body = document.createElement("div");
+      body.className = "place-card-body";
+      const travel = travelLine(place, transport);
+      if (travel) body.append(travel);
+      group.body.forEach((el) => body.append(el));
+      details.append(summary, body);
+    } else {
+      details = foldSection(group.head);
+      group.body.forEach((el) => details.querySelector(".section-fold-body").append(el));
+    }
     group.head.replaceWith(details);
   });
 }
@@ -411,9 +475,54 @@ function renderHistoryList() {
     });
 }
 
+function loadSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readSettingsForm() {
+  const splitList = (value) =>
+    String(value || "")
+      .split(/[,，、;；]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  return {
+    preferences: splitList(prefInput.value),
+    restrictions: splitList(restrictInput.value),
+    transport: transportSelect.value,
+    mobility: mobilitySelect.value,
+    vehicle: vehicleSelect.value,
+    notes: notesInput.value.trim().slice(0, 120),
+  };
+}
+
+function saveSettings() {
+  const settings = readSettingsForm();
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  return settings;
+}
+
+function buildProfilePayload() {
+  const settings = loadSettings();
+  const profile = {};
+  if (settings.preferences?.length) profile.preferences = settings.preferences;
+  if (settings.restrictions?.length) profile.restrictions = settings.restrictions;
+  if (settings.transport) profile.transport = settings.transport;
+  if (settings.mobility && settings.mobility !== "normal") profile.mobility = settings.mobility;
+  if (settings.vehicle) profile.vehicle = settings.vehicle;
+  if (settings.notes) profile.notes = settings.notes;
+  return Object.keys(profile).length ? profile : null;
+}
+
 function closePanels() {
   historyPanel.classList.add("hidden");
   locationPanel.classList.add("hidden");
+  settingsPanel.classList.add("hidden");
 }
 
 function togglePanel(panel) {
@@ -426,7 +535,18 @@ function togglePanel(panel) {
       placeSearchInput.focus();
       if (!placeSearchResults.childElementCount) renderPlaceSuggestions([]);
     }
+    if (panel === settingsPanel) prefInput.focus();
   }
+}
+
+function fillSettingsForm() {
+  const settings = loadSettings();
+  prefInput.value = (settings.preferences || []).join("、");
+  restrictInput.value = (settings.restrictions || []).join("、");
+  transportSelect.value = settings.transport || "";
+  mobilitySelect.value = settings.mobility || "";
+  vehicleSelect.value = settings.vehicle || "";
+  notesInput.value = settings.notes || "";
 }
 
 restoreChat();
@@ -521,6 +641,7 @@ async function sendQuery(query) {
             }
           : {}),
         ...(state.radius ? { radius_meters: Number(state.radius) } : {}),
+        ...(buildProfilePayload() ? { profile: buildProfilePayload() } : {}),
         conversation_id: currentSession().conversationId,
         user: state.user,
       }),
@@ -701,6 +822,17 @@ newChatButton.addEventListener("click", () => {
 });
 locationButton.addEventListener("click", () => togglePanel(locationPanel));
 closeLocationButton.addEventListener("click", closePanels);
+settingsButton.addEventListener("click", () => {
+  fillSettingsForm();
+  togglePanel(settingsPanel);
+});
+closeSettingsButton.addEventListener("click", () => closePanels());
+[prefInput, restrictInput, transportSelect, mobilitySelect, vehicleSelect, notesInput].forEach(
+  (element) => {
+    element.addEventListener("change", saveSettings);
+    element.addEventListener("blur", saveSettings);
+  },
+);
 useBrowserLocationButton.addEventListener("click", () => {
   closePanels();
   locate();

@@ -342,6 +342,54 @@ def test_normalizer_prefers_frontend_radius_and_generalizes_keywords():
     assert len(body["keywords"]) <= 10
 
 
+def test_normalizer_merges_user_profile_from_settings():
+    dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
+    graph = dsl["workflow"]["graph"]
+    code_node = next(node for node in graph["nodes"] if node["id"] == "normalize")
+    namespace = {}
+    exec(code_node["data"]["code"], namespace)
+
+    profile_json = json.dumps(
+        {
+            "preferences": ["安静", "适合拍照"],
+            "restrictions": ["花生"],
+            "transport": "driving",
+            "mobility": "light",
+            "vehicle": "car",
+            "notes": "不吃夜宵",
+        },
+        ensure_ascii=False,
+    )
+    output = namespace["main"](
+        query="推荐附近的晚餐",
+        longitude="116.326",
+        latitude="40.003",
+        coordinate_system="gps",
+        categories=["美食"],
+        keywords=[],
+        preferences=[],
+        budget_per_person=None,
+        radius_meters=None,
+        transport="",
+        duration_minutes=None,
+        duration_days=None,
+        front_radius_meters=None,
+        profile_json=profile_json,
+    )
+    body = json.loads(output["request_body"])
+    context = json.loads(output["request_context"])
+    # 未明确出行方式时采用用户设置的默认值
+    assert body["transport"] == "driving"
+    # 用户偏好并入正向偏好，忌口并入避雷与核实提醒
+    assert "安静" in body["preferences"]
+    assert "适合拍照" in body["preferences"]
+    assert "花生" in context["avoid_terms"]
+    assert any("固定忌口" in note for note in context["special_notes"])
+    assert any("体力有限" in note for note in context["special_notes"])
+    assert any("可自驾" in note for note in context["special_notes"])
+    assert any("不吃夜宵" in note for note in context["special_notes"])
+
+
 def test_normalizer_prioritizes_explicit_current_time_and_handles_missing_location():
     dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
     graph = dsl["workflow"]["graph"]

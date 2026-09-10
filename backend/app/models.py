@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     coordinate_system: CoordinateSystem = "gps"
     position_name: str = Field(default="", max_length=80)
     radius_meters: int | None = Field(default=None, ge=100, le=30000)
+    profile: dict[str, Any] | None = None
     conversation_id: str = ""
     user: str = Field(min_length=1, max_length=128)
 

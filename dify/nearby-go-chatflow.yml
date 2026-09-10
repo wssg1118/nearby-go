@@ -323,7 +323,15 @@ workflow:
           required: false
           type: text-input
           variable: radius_meters
-      height: 289
+        - default: ''
+          hint: '用户设置面板的固定偏好（JSON）'
+          label: 用户画像
+          max_length: 2048
+          options: []
+          required: false
+          type: paragraph
+          variable: profile_json
+      height: 322
       id: start
       position:
         x: 0
@@ -402,7 +410,7 @@ workflow:
 
           decision_priority 只能是 balanced、nearest、rating、budget、experience 之一；未明确时为 balanced。plan_mode 只能是 quick_pick、compare、itinerary、multi_day、memory_only 之一：只问推荐用 quick_pick，要求对比用 compare，路线/安排用 itinerary，多日用 multi_day；如果当前消息只查询、写入、删除或清空记忆而没有要求地点推荐，使用 memory_only。
 
-          transport 只能是 walking 或 driving；步行、散步用 walking，自驾、开车、打车用 driving，未明确时用 walking。公交、骑行等后端暂不支持时仍填 walking，并把原始要求放入 special_notes。
+          transport 只能是 walking、driving 或空字符串；步行、散步用 walking，自驾、开车、打车用 driving；用户没有明确提到出行方式时必须填空字符串（交由用户设置的默认值决定），不要擅自填 walking。公交、骑行等后端暂不支持时填 walking，并把原始要求放入 special_notes。
 
           radius_meters 根据“步行多少分钟”等表述合理换算，未明确时留空。
 
@@ -463,7 +471,7 @@ workflow:
           name: radius_meters
           required: false
           type: number
-        - description: walking 或 driving
+        - description: walking、driving 或空字符串（用户未明确提到出行方式时填空字符串）
           name: transport
           required: false
           type: string
@@ -585,7 +593,7 @@ workflow:
                    special_notes=None, location_accuracy=None,
                    location_name=None, fallback_location_name=None,
                    long_term_profile=None, memory_notice=None,
-                   front_radius_meters=None):
+                   front_radius_meters=None, profile_json=None):
               def as_list(value, limit=20):
                   if isinstance(value, list):
                       items = [str(x).strip() for x in value if str(x).strip()]
@@ -644,9 +652,19 @@ workflow:
                   if not any(x in {'购物', '娱乐', '电影', '景点', '公园'} for x in normalized_categories):
                       normalized_categories.extend(['景点', '娱乐', '公园'])
 
+              ui_profile = {}
+              try:
+                  parsed_profile = json.loads(profile_json) if profile_json else {}
+                  if isinstance(parsed_profile, dict):
+                      ui_profile = parsed_profile
+              except (TypeError, ValueError, json.JSONDecodeError):
+                  ui_profile = {}
+
               transport_match = re.search(r'(步行|走路|散步|开车|驾车|自驾|打车|乘车)', query_text)
               if transport_match:
                   mode = 'driving' if transport_match.group(1) in ('开车', '驾车', '自驾', '打车', '乘车') else 'walking'
+              elif ui_profile.get('transport') in ('walking', 'driving'):
+                  mode = ui_profile.get('transport')
               else:
                   mode = transport if transport in ('walking', 'driving') else 'walking'
               radius_number = as_number(front_radius_meters)
@@ -740,17 +758,27 @@ workflow:
               dietary = as_list(as_list(dietary_needs, 8) + remembered_dietary, 12)
               access = as_list(as_list(accessibility_needs, 8) + remembered_access, 12)
               moods = as_list(ambience, 8)
-              current_soft_preferences = as_list(as_list(preferences) + moods, 16)
+              ui_preferences = as_list(ui_profile.get('preferences'), 8)
+              ui_restrictions = as_list(ui_profile.get('restrictions'), 8)
+              current_soft_preferences = as_list(as_list(preferences) + moods + ui_preferences, 20)
               effective_remembered_preferences = [] if current_soft_preferences else remembered_preferences
               positive_preferences = as_list(
                   current_soft_preferences + effective_remembered_preferences + companions + access,
                   20,
               )
-              avoid = as_list(as_list(avoid_terms, 10) + remembered_avoid, 16)
+              avoid = as_list(as_list(avoid_terms, 10) + remembered_avoid + ui_restrictions, 16)
               notes = as_list(as_list(special_notes, 5) + remembered_notes, 10)
               if any(term in query_text for term in ('公交', '地铁', '骑行', '自行车')):
                   notes.append('用户提到的交通方式暂不在实时路线接口支持范围内，当前后端按步行模式检索。')
-              notes = as_list(notes, 5)
+              if ui_restrictions:
+                  notes.append('用户固定忌口/避雷：' + '、'.join(ui_restrictions) + '，涉及安全健康的要求必须提醒向商家核实。')
+              if ui_profile.get('mobility') == 'light':
+                  notes.append('用户体力有限：优先距离近的候选，控制步行总距离，避免长距离跨区移动。')
+              if ui_profile.get('vehicle') == 'car':
+                  notes.append('用户可自驾：可推荐稍远但品质更好的候选，注意停车便利性。')
+              if str(ui_profile.get('notes') or '').strip():
+                  notes.append('用户固定要求：' + str(ui_profile.get('notes')).strip()[:120])
+              notes = as_list(notes, 8)
 
               keyword_list = as_list(keywords, 10)
               niche_terms = ('洗脚', '足疗', '足浴', '洗浴', '汗蒸', '桑拿', '按摩', '推拿', '采耳',
@@ -929,6 +957,10 @@ workflow:
           - start
           - radius_meters
           variable: front_radius_meters
+        - value_selector:
+          - start
+          - profile_json
+          variable: profile_json
         - value_selector:
           - memory_merge
           - updated_profile
@@ -1568,6 +1600,8 @@ workflow:
             只能根据 data 中的结构化字段描述地点、类别、地址、标签、评分、人均价格、距离、路线和规划时间。score 是内部综合排序分，不是用户评分，禁止展示成星级或评分。缺失价格或 rating 必须写“暂无数据”，不得把缺失评分当作低分。
 
             route_status=available 时才可称“实际路线距离/耗时”；route_status=straight_line_only 时必须写“仅直线距离参考，未取得实际路线”，绝不能把 straight_distance_meters 写成路线距离。planning_duration_is_estimate=true 时必须标明规划交通时间是估算。
+
+            描述交通或到达方式时不得默认步行：根据 transport 与直线距离灵活选择措辞（近距离可提步行，中距离可提骑行/驾车，远距离建议驾车或公交）；系统会在每张推荐卡顶部自动生成确定性“到达方式”行与高德路线按钮，你不要重复输出直线距离、耗时估算或导航链接。
 
             dietary_needs、accessibility_needs、companion_profile、ambience、avoid_terms 和 special_notes 是用户约束，不代表候选已经满足。只有地点的 name/category/tags/address 明确支持时才能说“数据中可见匹配”；否则写“需向商家/场所确认”。清真、过敏原、无障碍、宠物友好、婴儿设施等安全或可达性要求永远不得仅凭常识确认。
 

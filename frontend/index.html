@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#14532d" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: https://*.autonavi.com https://*.amap.com; style-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'" />
     <title>附近发现 · NearbyGo</title>
-    <link rel="stylesheet" href="/styles.css?v=20260910-4" />
+    <link rel="stylesheet" href="/styles.css?v=20260910-5" />
   </head>
   <body>
     <main class="app-shell">
@@ -18,6 +18,7 @@
         <div class="topbar-actions">
           <button id="historyButton" class="clear-chat-button" type="button">历史对话</button>
           <button id="clearChatButton" class="clear-chat-button" type="button">新对话</button>
+          <button id="settingsButton" class="clear-chat-button" type="button">设置</button>
           <button id="locationButton" class="location-button" type="button">
             <span class="pulse"></span>
             <span id="locationLabel">正在定位</span>
@@ -50,6 +51,51 @@
         />
         <ul id="placeSearchResults" class="place-results"></ul>
         <button id="useBrowserLocation" class="panel-use-browser" type="button">重新使用浏览器定位</button>
+      </div>
+
+      <div id="settingsPanel" class="float-panel hidden" aria-label="用户设置">
+        <div class="panel-head">
+          <strong>用户设置</strong>
+          <button id="closeSettingsPanel" class="panel-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <label class="field">
+          常用偏好
+          <input id="prefInput" type="text" maxlength="80" placeholder="安静、适合拍照、亲子（逗号分隔）" />
+        </label>
+        <label class="field">
+          饮食忌口
+          <input id="restrictInput" type="text" maxlength="80" placeholder="香菜、花生（会提醒核实）" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            默认出行
+            <select id="transportSelect">
+              <option value="">每次再选</option>
+              <option value="walking">步行</option>
+              <option value="driving">驾车</option>
+            </select>
+          </label>
+          <label class="field">
+            步行体力
+            <select id="mobilitySelect">
+              <option value="">不限</option>
+              <option value="light">容易累，少走</option>
+              <option value="normal">正常</option>
+            </select>
+          </label>
+          <label class="field">
+            自驾
+            <select id="vehicleSelect">
+              <option value="">未提供</option>
+              <option value="car">有车</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          其他固定要求
+          <textarea id="notesInput" rows="2" maxlength="120" placeholder="例如：不吃夜宵、希望安静座位"></textarea>
+        </label>
+        <p class="settings-hint">设置会保存在本机，并随每次提问自动生效。</p>
       </div>
 
       <section id="messages" class="messages" aria-live="polite">
@@ -91,7 +137,7 @@
       </form>
       <p class="privacy-note">聊天记录仅保存在此设备浏览器，可随时清空；定位不保存。路线、价格和营业信息可能变化，请以商家及高德地图为准。</p>
     </main>
-    <script src="/markdown.js?v=20260910-4" defer></script>
-    <script src="/app.js?v=20260910-4" defer></script>
+    <script src="/markdown.js?v=20260910-5" defer></script>
+    <script src="/app.js?v=20260910-5" defer></script>
   </body>
 </html>
