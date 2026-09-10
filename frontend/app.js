@@ -201,6 +201,30 @@ function restoreChat() {
   if (!session.history.length) return;
   messages.replaceChildren();
   session.history.forEach(({ role, text }) => addMessage(role, text));
+  normalizeVisualImages();
+}
+
+function normalizeVisualImages() {
+  document.querySelectorAll("img.answer-visual").forEach((img) => {
+    if (img.classList.contains("loaded") || img.classList.contains("error")) return;
+    if (img.complete) {
+      img.classList.add(img.naturalWidth ? "loaded" : "error");
+    } else {
+      img.classList.add("loading");
+    }
+  });
+}
+
+function handleVisualImageEvent(event) {
+  const img = event.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("answer-visual")) return;
+  if (event.type === "error") {
+    img.classList.remove("loading", "loaded");
+    img.classList.add("error");
+  } else {
+    img.classList.remove("loading", "error");
+    img.classList.add("loaded");
+  }
 }
 
 function startNewSession() {
@@ -559,4 +583,6 @@ useBrowserLocationButton.addEventListener("click", () => {
   locate();
 });
 clearChatButton.addEventListener("click", startNewSession);
+messages.addEventListener("load", handleVisualImageEvent, true);
+messages.addEventListener("error", handleVisualImageEvent, true);
 locate();

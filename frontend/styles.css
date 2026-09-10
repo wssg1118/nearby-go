@@ -21,6 +21,9 @@ body {
 
 button, textarea { font: inherit; }
 
+button { transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease; }
+button:active:not(:disabled) { transform: scale(0.97); }
+
 .app-shell {
   width: min(820px, 100%);
   min-height: 100vh;
@@ -59,10 +62,12 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   border: 0;
   background: transparent;
   color: #647369;
-  padding: 9px 4px;
+  padding: 9px 6px;
   cursor: pointer;
   white-space: nowrap;
+  border-radius: 8px;
 }
+.clear-chat-button:hover { color: var(--green); background: rgba(20, 83, 45, 0.06); }
 
 .clear-chat-button:disabled { opacity: 0.45; cursor: wait; }
 
@@ -78,6 +83,7 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   cursor: pointer;
   white-space: nowrap;
 }
+.location-button:hover { border-color: rgba(23, 107, 58, 0.35); background: #f4f8f3; }
 
 .pulse {
   width: 8px;
@@ -85,6 +91,11 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   border-radius: 50%;
   background: #d18b32;
   box-shadow: 0 0 0 4px rgba(209, 139, 50, 0.14);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  50% { box-shadow: 0 0 0 7px rgba(209, 139, 50, 0.08); }
 }
 
 .location-button.ready .pulse { background: #2e8b57; box-shadow: 0 0 0 4px rgba(46, 139, 87, 0.14); }
@@ -169,6 +180,22 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   object-fit: cover;
   background: #e5ebe3;
 }
+.bubble img.answer-visual.loading {
+  opacity: 0;
+  border-color: transparent;
+}
+.bubble img.answer-visual.loaded {
+  opacity: 1;
+  transition: opacity 0.35s ease;
+}
+.bubble img.answer-visual.error {
+  min-height: 110px;
+  background: repeating-linear-gradient(45deg, #eceee9 0 12px, #e3e7e1 12px 24px);
+  color: #6c7a70;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+}
 .bubble .answer-visual-thumb {
   display: block;
   width: auto;
@@ -198,8 +225,15 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   border-radius: 16px;
   background: var(--cream);
   box-shadow: 0 18px 50px rgba(42, 55, 45, 0.22);
+  transform-origin: top right;
+  animation: panel-in 0.18s ease-out;
 }
 .float-panel.hidden { display: none; }
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .panel-head { display: flex; align-items: center; justify-content: space-between; }
 .panel-close {
   border: 0;
@@ -299,7 +333,8 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   font-size: 11px;
 }
 
-.quick-prompts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.quick-prompts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.quick-prompts::-webkit-scrollbar { display: none; }
 .quick-prompts button {
   flex: 0 0 auto;
   border: 1px solid var(--line);
@@ -309,6 +344,7 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   padding: 8px 12px;
   cursor: pointer;
 }
+.quick-prompts button:hover { border-color: rgba(23, 107, 58, 0.35); background: #e1efe3; color: #176b3a; }
 
 .composer {
   display: grid;
@@ -343,16 +379,27 @@ textarea {
   font-weight: 800;
   cursor: pointer;
 }
+.composer button:hover:not(:disabled) { background: #1a6b3a; }
 
 .composer button:disabled { opacity: 0.45; cursor: wait; }
 .privacy-note { margin: -7px 4px 0; color: #7a817b; font-size: 11px; text-align: center; }
 
 @media (max-width: 540px) {
   .app-shell { padding-left: 12px; padding-right: 12px; }
-  .topbar { align-items: center; }
-  .topbar-actions { flex-direction: column-reverse; align-items: flex-end; gap: 2px; }
-  .location-button { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  .topbar { align-items: flex-start; }
+  .topbar-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    max-width: 62%;
+  }
+  .location-button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; padding: 7px 10px; }
   .clear-chat-button { padding-top: 4px; padding-bottom: 4px; font-size: 12px; }
   .messages { max-height: none; }
   .bubble { max-width: 88%; }
+  .bubble .answer-visual { max-height: 260px; }
+  .bubble .answer-visual-thumb { min-width: 140px; max-width: 85%; }
+  .float-panel { top: auto; bottom: 86px; }
 }
