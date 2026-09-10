@@ -228,6 +228,70 @@ function foldSection(heading, summaryLabel) {
   return details;
 }
 
+function estimateTravelText(meters, transport) {
+  const driving = transport === "driving";
+  const minutes = Math.max(1, Math.round(meters / (driving ? 500 : 80)));
+  return `${meters}m · ${driving ? "驾车" : "步行"}约${minutes}分钟`;
+}
+
+function buildComparisonTable(places, itinerary, transport) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["排名", "推荐", "评分", "人均", "距离·时间"].forEach((text) => {
+    const th = document.createElement("th");
+    th.textContent = text;
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const tbody = document.createElement("tbody");
+  places.forEach((place, index) => {
+    if (!place || typeof place !== "object") return;
+    const tr = document.createElement("tr");
+    const rank = document.createElement("td");
+    rank.textContent = String(place.index || index + 1);
+    const name = document.createElement("td");
+    if (place.navigation_url && String(place.navigation_url).startsWith("https://")) {
+      const link = document.createElement("a");
+      link.href = place.navigation_url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.className = "amap-navigation";
+      link.textContent = place.name || "附近地点";
+      name.append(link);
+    } else {
+      name.textContent = place.name || "附近地点";
+    }
+    const rating = document.createElement("td");
+    rating.textContent = typeof place.rating === "number" ? place.rating.toFixed(1) : "—";
+    const cost = document.createElement("td");
+    cost.textContent =
+      typeof place.cost_per_person === "number" ? `¥${Math.round(place.cost_per_person)}` : "—";
+    const distance = document.createElement("td");
+    const segment = Array.isArray(itinerary) ? itinerary[index] : null;
+    if (segment && typeof segment.route_distance_meters === "number") {
+      distance.textContent =
+        typeof segment.route_duration_minutes === "number"
+          ? `${Math.round(segment.route_distance_meters)}m · ${segment.route_duration_minutes}分钟`
+          : `${Math.round(segment.route_distance_meters)}m`;
+    } else if (typeof place.straight_distance_meters === "number") {
+      distance.textContent = estimateTravelText(
+        Math.round(place.straight_distance_meters),
+        transport,
+      );
+    } else {
+      distance.textContent = "—";
+    }
+    tr.append(rank, name, rating, cost, distance);
+    tbody.append(tr);
+  });
+  table.append(thead, tbody);
+  wrap.append(table);
+  return wrap;
+}
+
 function enhancePlaceCards(bubble, data) {
   const places = data && Array.isArray(data.places) ? data.places : [];
   const transport = data && typeof data.transport === "string" ? data.transport : "walking";
@@ -276,7 +340,14 @@ function enhancePlaceCards(bubble, data) {
       details.append(summary, body);
     } else {
       details = foldSection(group.head);
-      group.body.forEach((el) => details.querySelector(".section-fold-body").append(el));
+      const foldBody = details.querySelector(".section-fold-body");
+      group.body.forEach((el) => foldBody.append(el));
+      if (/^对比一览\s*$/.test(group.head.textContent.trim()) && places.length) {
+        foldBody.querySelectorAll(".table-wrap").forEach((el) => el.remove());
+        foldBody.prepend(
+          buildComparisonTable(places, (data && data.itinerary) || [], transport),
+        );
+      }
     }
     group.head.replaceWith(details);
   });
@@ -805,7 +876,13 @@ placeSearchInput.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#locationPanel, #locationButton, #historyPanel, #historyButton")) return;
+  if (
+    event.target.closest(
+      "#locationPanel, #locationButton, #historyPanel, #historyButton, #settingsPanel, #settingsButton",
+    )
+  ) {
+    return;
+  }
   closePanels();
 });
 

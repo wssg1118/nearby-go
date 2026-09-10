@@ -273,6 +273,27 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> tuple[str, list[dic
             for index, place in enumerate(additional, start=1)
             if isinstance(place, dict)
         ],
+        "itinerary": [
+            {
+                "route_distance_meters": (
+                    segment.get("route_distance_meters")
+                    if isinstance(segment.get("route_distance_meters"), (int, float))
+                    else None
+                ),
+                "route_duration_minutes": (
+                    segment.get("route_duration_minutes")
+                    or segment.get("planning_duration_minutes")
+                )
+                if isinstance(
+                    segment.get("route_duration_minutes")
+                    or segment.get("planning_duration_minutes"),
+                    (int, float),
+                )
+                else None,
+            }
+            for segment in itinerary
+            if isinstance(segment, dict)
+        ],
     }
     blocks.append(
         f'<!--NEARBYGO-DATA:{json.dumps(data_blob, ensure_ascii=False, separators=(",", ":"))}-->'

@@ -195,6 +195,31 @@ def _prepare_candidates(
     return candidates
 
 
+MAX_KEYWORD_SEARCHES = 4
+
+
+async def _search_keyword(
+    amap: AmapClient,
+    center: tuple[float, float],
+    radius_meters: int,
+    types: list[str],
+    keyword: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """One keyword per request: AMap merges `|`-joined keywords into one OR
+    query where a broad term can crowd out the specific niche one."""
+    try:
+        return await amap.search_around(
+            *center,
+            radius_meters=radius_meters,
+            types=types,
+            keywords=[keyword],
+            limit=limit,
+        )
+    except AmapError:
+        return []
+
+
 async def _search_group(
     amap: AmapClient,
     center: tuple[float, float],
@@ -207,26 +232,25 @@ async def _search_group(
     collected: list[dict[str, Any]] = []
 
     if request.keywords:
-        collected.extend(
-            await amap.search_around(
-                *center,
-                radius_meters=request.radius_meters,
-                types=types,
-                keywords=request.keywords,
-                limit=20,
+        primary = request.keywords[:MAX_KEYWORD_SEARCHES]
+        batches = await asyncio.gather(
+            *(
+                _search_keyword(amap, center, request.radius_meters, types, keyword, 15)
+                for keyword in primary
             )
         )
+        for batch in batches:
+            collected.extend(batch)
         if len(collected) < target_count:
-            # 小众业态（足疗、KTV、密室等）可能不在预设类型码内，追加不限类型的关键词搜索
-            collected.extend(
-                await amap.search_around(
-                    *center,
-                    radius_meters=request.radius_meters,
-                    types=[],
-                    keywords=request.keywords,
-                    limit=20,
+            # 小众业态（足疗、KTV、健身房等）可能不在预设类型码内，追加不限类型的逐词搜索
+            fallback = await asyncio.gather(
+                *(
+                    _search_keyword(amap, center, request.radius_meters, [], keyword, 15)
+                    for keyword in primary
                 )
             )
+            for batch in fallback:
+                collected.extend(batch)
     if not request.keywords or len(collected) < target_count:
         collected.extend(
             await amap.search_around(

@@ -402,7 +402,7 @@ workflow:
 
           keywords 只放店名、菜系、具体活动或地点类型；preferences 放正向软偏好，例如安静、亲子、适合拍照、室内。
 
-          keywords 必须实时泛化：对每个口语化、小众或具体业态词（如洗脚、足疗、清吧、网吧、奶茶、剧本杀、桌游、温泉、爬山），保留原词并按常识追加 1-3 个同义或相关搜索词（如“洗脚”→足疗/足浴/按摩，“清吧”→酒吧/小酒馆，“奶茶”→茶饮/饮品，“网吧”→网咖/电竞，“剧本杀”→密室/桌游），泛化词必须是高德 POI 搜索常见写法；不确定时不要编造，总数量不超过 8 个。
+          keywords 必须实时泛化：对每个口语化、小众或具体业态词（如洗脚、足疗、清吧、网吧、奶茶、健身房、剧本杀、桌游、温泉、爬山），保留原词并按常识追加 1-3 个同义或相关搜索词（如“洗脚”→足疗/足浴/按摩，“清吧”→酒吧/小酒馆，“奶茶”→茶饮/饮品，“健身房”→健身中心/运动馆，“网吧”→网咖/电竞，“剧本杀”→密室/桌游），泛化词必须是高德 POI 搜索常见写法；不确定时不要编造，总数量不超过 8 个。
 
           avoid_terms 只放用户明确说不要、避开、过敏、不能接受的词，不得混入正向 preferences。尽量归一为可匹配的原子关键词，例如“不要太辣”提取“辣”，“花生过敏”提取“花生”。
 
@@ -1507,6 +1507,17 @@ workflow:
                   'route_map_url': map_url,
                   'places': [slim_place(place, index) for index, place in enumerate(places, start=1) if isinstance(place, dict)],
                   'additional_places': [slim_place(place, index) for index, place in enumerate(additional, start=1) if isinstance(place, dict)],
+                  'itinerary': [
+                      {
+                          'route_distance_meters': segment.get('route_distance_meters')
+                          if isinstance(segment.get('route_distance_meters'), (int, float)) else None,
+                          'route_duration_minutes': (
+                              segment.get('route_duration_minutes') or segment.get('planning_duration_minutes')
+                          ) if isinstance(segment.get('route_duration_minutes') or segment.get('planning_duration_minutes'), (int, float)) else None,
+                      }
+                      for segment in itinerary
+                      if isinstance(segment, dict)
+                  ],
               }
               blocks.append(f'<!--NEARBYGO-DATA:{json.dumps(data_blob, ensure_ascii=False, separators=(",", ":"))}-->')
 
