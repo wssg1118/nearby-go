@@ -106,6 +106,13 @@ def test_dify_dsl_uses_current_canvas_shape():
     }
 
     extractor = next(node for node in graph["nodes"] if node["id"] == "extract")
+    extractor_instruction = extractor["data"]["instruction"]
+    assert "实时泛化" in extractor_instruction
+    assert "洗脚" in extractor_instruction
+    keywords_parameter = next(
+        item for item in extractor["data"]["parameters"] if item["name"] == "keywords"
+    )
+    assert "扩展同义" in keywords_parameter["description"]
     parameter_names = {item["name"] for item in extractor["data"]["parameters"]}
     assert {
         "avoid_terms",
@@ -330,9 +337,9 @@ def test_normalizer_prefers_frontend_radius_and_generalizes_keywords():
     body = json.loads(output["request_body"])
     # 前端选择的半径优先于查询文本与提取值
     assert body["radius_meters"] == 800
-    # 泛化：奶茶扩展出同组词，扩大召回
+    # 兜底：口语原词进入关键词；同义扩展由 extract 节点实时泛化
     assert "奶茶" in body["keywords"]
-    assert "茶饮" in body["keywords"]
+    assert len(body["keywords"]) <= 10
 
 
 def test_normalizer_prioritizes_explicit_current_time_and_handles_missing_location():

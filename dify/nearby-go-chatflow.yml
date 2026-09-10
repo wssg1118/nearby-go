@@ -394,6 +394,8 @@ workflow:
 
           keywords 只放店名、菜系、具体活动或地点类型；preferences 放正向软偏好，例如安静、亲子、适合拍照、室内。
 
+          keywords 必须实时泛化：对每个口语化、小众或具体业态词（如洗脚、足疗、清吧、网吧、奶茶、剧本杀、桌游、温泉、爬山），保留原词并按常识追加 1-3 个同义或相关搜索词（如“洗脚”→足疗/足浴/按摩，“清吧”→酒吧/小酒馆，“奶茶”→茶饮/饮品，“网吧”→网咖/电竞，“剧本杀”→密室/桌游），泛化词必须是高德 POI 搜索常见写法；不确定时不要编造，总数量不超过 8 个。
+
           avoid_terms 只放用户明确说不要、避开、过敏、不能接受的词，不得混入正向 preferences。尽量归一为可匹配的原子关键词，例如“不要太辣”提取“辣”，“花生过敏”提取“花生”。
 
           companion_profile 提取情侣、独自、朋友、亲子、老人、宠物等同行画像；dietary_needs 提取素食、清真、过敏原、忌口等；accessibility_needs 提取少走路、轮椅、婴儿车等可达性要求；ambience 提取安静、热闹、浪漫、适合聊天、适合拍照等氛围。
@@ -445,7 +447,7 @@ workflow:
           name: categories
           required: false
           type: array[string]
-        - description: 用户明确给出的店名、菜系、活动等搜索关键词
+        - description: 用户明确给出的店名、菜系、活动等搜索关键词；需按常识实时扩展同义或相关搜索词（保留原词），最多 8 个
           name: keywords
           required: false
           type: array[string]
@@ -756,28 +758,11 @@ workflow:
                              '电玩', '游泳', '健身', '瑜伽', '美甲', '美睫', '美发', '理发', 'spa',
                              '奶茶', '甜品', '烘焙', '烧烤', '火锅', '日料', '自助', '温泉', '滑雪',
                              '露营', '骑行', '爬山', '徒步', '钓鱼', '书店', '自习')
-              synonym_groups = (
-                  ('洗脚', '足疗', '足浴', '洗浴', '按摩', 'spa'),
-                  ('清吧', '酒吧', '小酒馆'),
-                  ('网吧', '网咖', '电竞'),
-                  ('奶茶', '茶饮', '饮品', '咖啡'),
-                  ('剧本杀', '密室', '桌游', '益智'),
-                  ('健身', '瑜伽', '游泳', '运动'),
-                  ('汗蒸', '桑拿', '洗浴', '温泉'),
-              )
               query_lower = query_text.lower()
-              matched_niche = []
+              # 兜底：确保口语原词进入关键词；同义词扩展由 extract 节点实时泛化
               for term in niche_terms:
                   if term in query_lower and not any(term in str(item).lower() for item in keyword_list):
                       keyword_list.append(term)
-                      matched_niche.append(term)
-              for group in synonym_groups:
-                  if any(term in query_lower or term in matched_niche for term in group):
-                      for term in group:
-                          if len(keyword_list) >= 8:
-                              break
-                          if not any(term in str(item).lower() for item in keyword_list):
-                              keyword_list.append(term)
               keyword_list = as_list(keyword_list, 10)
 
               budget = as_number(budget_per_person)
