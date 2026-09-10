@@ -155,9 +155,86 @@ async def test_explicit_keyword_zero_results_falls_back_to_category_search():
         amap,
     )
 
-    assert len(amap.searches) == 2
-    assert amap.searches[1][1]["keywords"] == []
+    assert len(amap.searches) == 3
+    assert amap.searches[2][1]["keywords"] == []
     assert result.places
+
+
+@pytest.mark.asyncio
+async def test_niche_keyword_retries_without_type_filter():
+    class NicheKeywordAmap(FakeAmap):
+        async def search_around(self, longitude, latitude, **kwargs):
+            self.searches.append(((longitude, latitude), kwargs))
+            if kwargs["keywords"] and kwargs["types"]:
+                return []
+            if kwargs["keywords"]:
+                return DINING_POIS
+            return []
+
+    amap = NicheKeywordAmap()
+    result = await build_recommendations(
+        RecommendationRequest(
+            longitude=116.326,
+            latitude=40.003,
+            categories=["娱乐"],
+            keywords=["洗脚店"],
+        ),
+        amap,
+    )
+
+    assert len(amap.searches) == 3
+    assert amap.searches[0][1]["types"] == ["080000"]
+    assert amap.searches[1][1]["types"] == []
+    assert amap.searches[1][1]["keywords"] == ["洗脚店"]
+    assert [place.name for place in result.places] == [
+        "测试川菜馆 <不可信>",
+        "较远餐厅",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_route_polyline_is_passed_through_to_itinerary_segments():
+    polyline = "116.327,40.004;116.328,40.005;116.330,40.010"
+
+    class PolylineAmap(FakeAmap):
+        async def route(self, origin, destination, mode):
+            self.routes.append((origin, destination, mode))
+            return {"distance": 800, "duration": 720, "polyline": polyline}
+
+    result = await build_recommendations(
+        RecommendationRequest(
+            longitude=116.326,
+            latitude=40.003,
+            categories=["美食"],
+            result_count=1,
+        ),
+        PolylineAmap(),
+    )
+
+    assert len(result.itinerary) == 1
+    assert result.itinerary[0].route_polyline == polyline
+
+
+@pytest.mark.asyncio
+async def test_leftover_candidates_become_additional_places_with_navigation():
+    amap = FakeAmap()
+    result = await build_recommendations(
+        RecommendationRequest(
+            longitude=116.326,
+            latitude=40.003,
+            coordinate_system="autonavi",
+            categories=["美食"],
+            result_count=1,
+        ),
+        amap,
+    )
+
+    assert len(result.places) == 1
+    assert [place.name for place in result.additional_places] == ["较远餐厅"]
+    extra = result.additional_places[0]
+    assert extra.route_status == "straight_line_only"
+    assert extra.straight_distance_meters > 0
+    assert extra.navigation_url.startswith("https://uri.amap.com/navigation")
 
 
 @pytest.mark.asyncio

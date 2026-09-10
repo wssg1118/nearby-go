@@ -95,6 +95,7 @@ class ItinerarySegment(BaseModel):
     route_status: Literal["available", "straight_line_only"]
     route_distance_meters: int | None = None
     route_duration_minutes: int | None = None
+    route_polyline: str | None = None
     straight_distance_meters: int | None = None
     planning_duration_minutes: int
     planning_duration_is_estimate: bool = False
@@ -136,6 +137,7 @@ class RecommendationResponse(BaseModel):
     total_flexible_minutes: int | None = None
     route_map_path: str | None = None
     places: list[PlaceRecommendation]
+    additional_places: list[PlaceRecommendation] = Field(default_factory=list)
     itinerary: list[ItinerarySegment] = Field(default_factory=list)
     itinerary_days: list[ItineraryDay] = Field(default_factory=list)
     planning_assumptions: list[str] = Field(default_factory=list)

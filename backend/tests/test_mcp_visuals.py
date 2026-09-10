@@ -43,10 +43,25 @@ def test_mcp_visual_cards_include_map_transport_and_only_https_images():
             },
             {"name": "坏图", "image_urls": ["javascript:alert(1)"]},
         ],
+        "additional_places": [
+            {
+                "name": "备选咖啡",
+                "category": "餐饮服务;咖啡厅",
+                "straight_distance_meters": 900,
+                "rating": 4.5,
+                "navigation_url": "https://uri.amap.com/navigation?to=116.3,40.0",
+            }
+        ],
     }
     cards = _travel_cards(json.dumps(payload, ensure_ascii=False), "https://guide.example.com")
 
     assert "https://guide.example.com/api/route-map?" in cards
+    assert "实际路线" in cards
     assert "🚶 步行" in cards
     assert "https://store.is.autonavi.com/photo.jpg" in cards
     assert "javascript:" not in cards
+    assert "其他候选" in cards
+    assert "备选咖啡" in cards
+    assert "咖啡厅" in cards
+    assert "直线约 900 米" in cards
+    assert "https://uri.amap.com/navigation?to=116.3,40.0" in cards

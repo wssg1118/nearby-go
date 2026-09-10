@@ -31,6 +31,7 @@ CATEGORY_TYPES = {
 DINING_CATEGORIES = {"美食", "餐厅", "咖啡"}
 ACTIVITY_CATEGORIES = {"购物", "娱乐", "电影", "景点", "公园"}
 MAX_CONCURRENT_ROUTE_REQUESTS = 6
+MAX_ADDITIONAL_PLACES = 7
 
 
 def _number(value: Any) -> float | None:
@@ -73,6 +74,17 @@ def _category_group(category: str) -> str:
     if category in ACTIVITY_CATEGORIES:
         return "activity"
     return "other"
+
+
+def _tags(poi: dict[str, Any]) -> list[str]:
+    tag_text = _text(poi.get("tag"))
+    return [
+        item.strip() for item in tag_text.replace("，", ",").split(",") if item.strip()
+    ][:6]
+
+
+def _poi_identity(poi: dict[str, Any]) -> str:
+    return str(poi.get("id") or f"{poi['_lng']:.6f},{poi['_lat']:.6f}")
 
 
 def _score_place(
@@ -204,6 +216,17 @@ async def _search_group(
                 limit=20,
             )
         )
+        if len(collected) < target_count:
+            # 小众业态（足疗、KTV、密室等）可能不在预设类型码内，追加不限类型的关键词搜索
+            collected.extend(
+                await amap.search_around(
+                    *center,
+                    radius_meters=request.radius_meters,
+                    types=[],
+                    keywords=request.keywords,
+                    limit=20,
+                )
+            )
     if not request.keywords or len(collected) < target_count:
         collected.extend(
             await amap.search_around(
@@ -539,6 +562,7 @@ async def build_recommendations(
     results: list[PlaceRecommendation] = []
     itinerary: list[ItinerarySegment] = []
     day_pairs: list[list[tuple[PlaceRecommendation, ItinerarySegment]]] = []
+    selected_identities: set[str] = set()
 
     route_specs: list[
         tuple[int, int, tuple[float, float], tuple[float, float]]
@@ -582,12 +606,7 @@ async def build_recommendations(
                 route_failures.append(exc)
 
             biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
-            tag_text = _text(poi.get("tag"))
-            tags = [
-                item.strip()
-                for item in tag_text.replace("，", ",").split(",")
-                if item.strip()
-            ]
+            tags = _tags(poi)
             straight_distance = _haversine_meters(segment_origin, destination)
             route_distance = route["distance"] if route else None
             route_duration = math.ceil(route["duration"] / 60) if route else None
@@ -602,6 +621,7 @@ async def build_recommendations(
                 route_score = max(0.0, 1 - route_duration / 60)
                 score = round(0.8 * score + 20 * route_score, 1)
             name = _text(poi.get("name")) or "未命名地点"
+            selected_identities.add(_poi_identity(poi))
             result = PlaceRecommendation(
                 poi_id=str(poi.get("id") or ""),
                 name=name,
@@ -617,7 +637,7 @@ async def build_recommendations(
                 route_duration_minutes=route_duration,
                 rating=_number(biz_ext.get("rating")),
                 cost_per_person=_number(biz_ext.get("cost")),
-                tags=tags[:6],
+                tags=tags,
                 image_urls=_image_urls(poi.get("photos")),
                 score=score,
                 navigation_url=_navigation_url(
@@ -637,6 +657,7 @@ async def build_recommendations(
                 route_status=result.route_status,
                 route_distance_meters=route_distance,
                 route_duration_minutes=route_duration,
+                route_polyline=(route or {}).get("polyline") or None,
                 straight_distance_meters=straight_distance,
                 planning_duration_minutes=planning_duration,
                 planning_duration_is_estimate=route is None,
@@ -647,6 +668,44 @@ async def build_recommendations(
             segment_origin = destination
             segment_origin_name = name
         day_pairs.append(pairs)
+
+    additional_places: list[PlaceRecommendation] = []
+    extra_pool: list[dict[str, Any]] = []
+    seen_extras: set[str] = set()
+    for group in ("dining", "activity", "other"):
+        for poi in candidates_by_group[group]:
+            identity = _poi_identity(poi)
+            if identity in selected_identities or identity in seen_extras:
+                continue
+            seen_extras.add(identity)
+            extra_pool.append(poi)
+    extra_pool.sort(key=lambda item: item["_score"], reverse=True)
+    for poi in extra_pool[:MAX_ADDITIONAL_PLACES]:
+        biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
+        name = _text(poi.get("name")) or "未命名地点"
+        destination = (poi["_lng"], poi["_lat"])
+        additional_places.append(
+            PlaceRecommendation(
+                poi_id=str(poi.get("id") or ""),
+                name=name,
+                category=_text(poi.get("type")),
+                address=_text(poi.get("address")),
+                longitude=poi["_lng"],
+                latitude=poi["_lat"],
+                group=poi["_group"],
+                route_from="当前位置",
+                route_status="straight_line_only",
+                straight_distance_meters=_haversine_meters(origin, destination),
+                rating=_number(biz_ext.get("rating")),
+                cost_per_person=_number(biz_ext.get("cost")),
+                tags=_tags(poi),
+                image_urls=_image_urls(poi.get("photos")),
+                score=poi["_score"],
+                navigation_url=_navigation_url(
+                    origin, destination, name, request.transport
+                ),
+            )
+        )
 
     itinerary_days: list[ItineraryDay] = []
     planning_assumptions: list[str] = []
@@ -750,7 +809,8 @@ async def build_recommendations(
         total_visit_minutes=total_visit,
         total_flexible_minutes=total_flexible,
         places=results,
-        itinerary=itinerary if plan_requested else [],
+        additional_places=additional_places,
+        itinerary=itinerary,
         itinerary_days=itinerary_days,
         planning_assumptions=planning_assumptions,
         warnings=warnings,

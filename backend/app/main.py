@@ -43,7 +43,30 @@ app.add_middleware(
 )
 
 
-_POINTS_PATTERN = re.compile(r"^-?\d{1,3}(?:\.\d{1,6})?,-?\d{1,2}(?:\.\d{1,6})?(?:;-?\d{1,3}(?:\.\d{1,6})?,-?\d{1,2}(?:\.\d{1,6})?){0,9}$")
+_POINTS_PATTERN = re.compile(r"^-?\d{1,3}(?:\.\d{1,6})?,-?\d{1,2}(?:\.\d{1,6})?(?:;-?\d{1,3}(?:\.\d{1,6})?,-?\d{1,2}(?:\.\d{1,6})?){0,89}$")
+ROUTE_MAP_MAX_POINTS = 90
+
+
+def _parse_polyline(polyline: str) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for pair in polyline.split(";"):
+        try:
+            lng_text, lat_text = pair.split(",", maxsplit=1)
+            lng, lat = float(lng_text), float(lat_text)
+        except ValueError:
+            continue
+        if -180 <= lng <= 180 and -90 <= lat <= 90:
+            points.append((lng, lat))
+    return points
+
+
+def _downsample(
+    points: list[tuple[float, float]], cap: int
+) -> list[tuple[float, float]]:
+    if len(points) <= cap:
+        return points
+    step = (len(points) - 1) / (cap - 1)
+    return [points[round(index * step)] for index in range(cap)]
 
 
 def _verified_route_points(
@@ -68,10 +91,20 @@ def _verified_route_points(
 def _route_map_path(payload: RecommendationResponse, secret: str) -> str | None:
     if not secret or not payload.places:
         return None
-    coordinates = [
-        (float(payload.origin["longitude"]), float(payload.origin["latitude"])),
-        *((place.longitude, place.latitude) for place in payload.places[:9]),
-    ]
+    origin = (float(payload.origin["longitude"]), float(payload.origin["latitude"]))
+    legs = list(zip(payload.places[:9], payload.itinerary[:9]))
+    leg_cap = max(4, ROUTE_MAP_MAX_POINTS // max(1, len(legs)))
+    # 优先使用每段高德实际路线的 polyline；未取得路线的路段退回直线示意。
+    coordinates = [origin]
+    current = origin
+    for place, segment in legs:
+        end = (place.longitude, place.latitude)
+        leg = _parse_polyline(segment.route_polyline or "")
+        leg = _downsample(leg, leg_cap) if len(leg) >= 2 else [current, end]
+        coordinates.extend(leg[1:])
+        current = leg[-1]
+    if len(coordinates) < 2:
+        return None
     serialized = ";".join(f"{lng:.6f},{lat:.6f}" for lng, lat in coordinates)
     signature = hmac.new(
         secret.encode("utf-8"), serialized.encode("utf-8"), hashlib.sha256
@@ -99,8 +132,8 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
             blocks.extend(
                 [
                     "## 高德位置概览",
-                    f"![附近候选与行程顺序示意]({map_url})",
-                    "> 地图连线只表示行程顺序，不是实际道路轨迹；出发时以高德导航为准。",
+                    f"![附近候选与实际路线示意]({map_url})",
+                    "> 地图已按高德实际路线绘制；未取得路线的路段以直线示意，导航请以高德 App 实时路线为准。",
                 ]
             )
 
@@ -121,6 +154,35 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
             summaries.append(f"- {transport}：{start} → {end}（{detail}）")
         if summaries:
             blocks.extend(["### 路线摘要", *summaries])
+
+    additional = (
+        payload.get("additional_places")
+        if isinstance(payload.get("additional_places"), list)
+        else []
+    )
+    one_liners: list[str] = []
+    for place in additional:
+        if not isinstance(place, dict):
+            continue
+        name = _safe_markdown_text(place.get("name"), 30) or "附近地点"
+        category = str(place.get("category") or "").split(";")[-1].strip()
+        details = [category] if category else []
+        distance = place.get("straight_distance_meters")
+        if isinstance(distance, (int, float)):
+            details.append(f"直线约 {round(distance)} 米")
+        rating = place.get("rating")
+        if isinstance(rating, (int, float)):
+            details.append(f"评分 {rating}")
+        cost = place.get("cost_per_person")
+        if isinstance(cost, (int, float)):
+            details.append(f"人均 {round(cost)} 元")
+        url = str(place.get("navigation_url") or "")
+        line = f"- **{name}**（{' · '.join(details)}）"
+        if url.startswith("https://uri.amap.com/"):
+            line += f" — [高德导航]({url})"
+        one_liners.append(line)
+    if one_liners:
+        blocks.extend(["### 其他候选", *one_liners])
 
     places = payload.get("places") if isinstance(payload.get("places"), list) else []
     photos: list[str] = []

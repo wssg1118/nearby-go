@@ -130,7 +130,7 @@ def test_dify_dsl_uses_current_canvas_shape():
     ]
 
 
-def test_dify_uses_short_context_without_long_term_profile_storage():
+def test_extract_keeps_short_context_and_requires_explicit_memory_authorization():
     dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
     graph = dsl["workflow"]["graph"]
     extract = next(node for node in graph["nodes"] if node["id"] == "extract")
@@ -149,14 +149,29 @@ def test_dify_uses_short_context_without_long_term_profile_storage():
         "duration_minutes",
         "duration_days",
         "avoid_terms",
+        "companion_profile",
         "dietary_needs",
         "accessibility_needs",
+        "ambience",
+        "party_size",
+        "decision_priority",
+        "plan_mode",
         "start_time",
+        "special_notes",
+        "remember_preferences",
+        "remember_avoid_terms",
+        "remember_dietary_needs",
+        "remember_accessibility_needs",
+        "remember_companion_profile",
+        "remember_notes",
+        "forget_memory_terms",
+        "memory_action",
     }
-    assert not any(name.startswith("remember_") for name in parameter_names)
-    assert "memory_action" not in parameter_names
-    assert "当前消息永远优先" in extract["data"]["instruction"]
-    assert "不能直接复用历史地点结果" in extract["data"]["instruction"]
+    instruction = extract["data"]["instruction"]
+    assert "长期记忆授权规则" in instruction
+    assert "当前消息的新条件永远覆盖历史临时条件" in instruction
+    assert "不得保存具体经纬度" in instruction
+    assert "具体业态不属于这八类，一律放入 keywords" in instruction
 
 
 def test_question_classifier_preserves_nearby_and_general_branches():
@@ -167,8 +182,9 @@ def test_question_classifier_preserves_nearby_and_general_branches():
 
     assert route["type"] == "question-classifier"
     assert {item["id"] for item in route["classes"]} == {"nearby", "general"}
-    assert "换一个" in route["instruction"]
-    assert "优先选择“附近实时推荐”" in route["instruction"]
+    assert "附近出行美食" in route["instruction"]
+    assert "无法确定时" in route["instruction"]
+    assert "优先选日常问答" in route["instruction"]
 
     edges = {
         (edge["source"], edge["sourceHandle"], edge["target"])
@@ -180,8 +196,8 @@ def test_question_classifier_preserves_nearby_and_general_branches():
 
     general_prompt = nodes["general_chat"]["data"]["prompt_template"][0]["text"]
     assert "不需要定位" in general_prompt
-    assert "不要读取、讨论或推断用户位置" in general_prompt
-    assert "不建立长期用户画像" in general_prompt
+    assert "不要提及定位状态" in general_prompt
+    assert "不要调用、伪造或暗示" in general_prompt
 
 
 def test_normalizer_preserves_meal_and_activity_intent_and_duration():
@@ -259,6 +275,33 @@ def test_normalizer_builds_active_time_budget_and_stop_count_for_multi_day_trip(
     assert weekend_body["duration_days"] == 2
     assert weekend_body["duration_minutes"] == 2 * 480
     assert weekend_body["result_count"] == 8
+
+
+def test_normalizer_routes_niche_business_terms_into_amap_keywords():
+    dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
+    graph = dsl["workflow"]["graph"]
+    code_node = next(node for node in graph["nodes"] if node["id"] == "normalize")
+    namespace = {}
+    exec(code_node["data"]["code"], namespace)
+
+    output = namespace["main"](
+        query="附近有没有环境好点的洗脚店或足疗",
+        longitude="116.326",
+        latitude="40.003",
+        coordinate_system="gps",
+        categories=["娱乐"],
+        keywords=[],
+        preferences=[],
+        budget_per_person=None,
+        radius_meters=None,
+        transport="walking",
+        duration_minutes=None,
+        duration_days=None,
+    )
+    body = json.loads(output["request_body"])
+    assert body["categories"] == ["娱乐"]
+    assert "洗脚" in body["keywords"]
+    assert "足疗" in body["keywords"]
 
 
 def test_normalizer_prioritizes_explicit_current_time_and_handles_missing_location():
@@ -388,6 +431,9 @@ def test_explanation_prompt_requires_valid_markdown_and_honest_route_fallback():
     assert "memory_only" in system_prompt
     assert "记忆边界" in system_prompt
     assert "不得暗示记忆跨用户、跨设备或永久保存" in system_prompt
+    assert "response_mode" in system_prompt
+    assert "其他候选" in system_prompt
+    assert "unverified_constraints" in system_prompt
     assert explain["data"]["memory"]["window"] == {"enabled": True, "size": 6}
     answer = next(node for node in graph["nodes"] if node["id"] == "answer")
     assert "map_cards.visual_cards" in answer["data"]["answer"]
@@ -420,6 +466,15 @@ def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
                     {"name": "测试", "image_urls": ["https://store.is.autonavi.com/p.jpg"]},
                     {"name": "坏图", "image_urls": ["javascript:alert(1)"]},
                 ],
+                "additional_places": [
+                    {
+                        "name": "备选足疗店",
+                        "category": "休闲娱乐;桑拿/洗浴;洗浴推拿场所",
+                        "straight_distance_meters": 850,
+                        "rating": 4.5,
+                        "navigation_url": "https://uri.amap.com/navigation?to=116.3,40.0",
+                    }
+                ],
             },
             ensure_ascii=False,
         ),
@@ -427,9 +482,14 @@ def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
     )["visual_cards"]
 
     assert "https://guide.example.com/api/route-map?" in result
+    assert "实际路线" in result
     assert "🚶 步行" in result
     assert "https://store.is.autonavi.com/p.jpg" in result
     assert "javascript:" not in result
+    assert "其他候选" in result
+    assert "备选足疗店" in result
+    assert "洗浴推拿场所" in result
+    assert "https://uri.amap.com/navigation?to=116.3,40.0" in result
 
 
 def test_normalizer_builds_personalized_context_and_safe_location_fallback():
@@ -631,7 +691,7 @@ def test_result_auditor_handles_service_errors_and_constraint_conflicts():
             ensure_ascii=False,
         ),
         200,
-        json.dumps({"avoid_terms": ["辣"], "plan_mode": "quick_pick"}, ensure_ascii=False),
+        json.dumps({"avoid_terms": ["辣"], "response_mode": "quick_pick"}, ensure_ascii=False),
     )
     result = json.loads(audited["validated_result"])
     assert audited["response_state"] == "needs_caution"

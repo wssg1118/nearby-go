@@ -17,6 +17,18 @@ class AmapError(RuntimeError):
         return f"{self.args[0]}{suffix}"
 
 
+MAX_ROUTE_POLYLINE_POINTS = 60
+
+
+def compact_polyline(polyline: str, limit: int = MAX_ROUTE_POLYLINE_POINTS) -> str:
+    """Evenly downsample a "lng,lat;lng,lat" polyline so payloads stay small."""
+    points = [item for item in polyline.split(";") if item]
+    if len(points) <= limit:
+        return polyline
+    step = (len(points) - 1) / (limit - 1)
+    return ";".join(points[round(index * step)] for index in range(limit))
+
+
 class AmapClient:
     base_url = "https://restapi.amap.com"
 
@@ -95,7 +107,7 @@ class AmapClient:
         origin: tuple[float, float],
         destination: tuple[float, float],
         mode: str,
-    ) -> dict[str, int] | None:
+    ) -> dict[str, int | str] | None:
         path = "/v3/direction/driving" if mode == "driving" else "/v3/direction/walking"
         payload = await self._get(
             path,
@@ -109,7 +121,12 @@ class AmapClient:
         if not paths:
             raise AmapError("未返回可用路线", operation=path, code="NO_ROUTE")
         first = paths[0]
+        steps = first.get("steps") or []
+        polyline = compact_polyline(
+            ";".join(str(step.get("polyline") or "") for step in steps)
+        )
         return {
             "distance": int(float(first.get("distance") or 0)),
             "duration": int(float(first.get("duration") or 0)),
+            "polyline": polyline,
         }

@@ -40,13 +40,9 @@ const state = {
   history: savedChat.history,
   user: localStorage.getItem("nearbygo-user") || crypto.randomUUID(),
   busy: false,
-  readAloud: localStorage.getItem("nearbygo-read-aloud") !== "false",
   recorder: null,
   recognition: null,
   recordingChunks: [],
-  ttsChunks: [],
-  ttsReceived: false,
-  audio: null,
 };
 localStorage.setItem("nearbygo-user", state.user);
 
@@ -58,7 +54,6 @@ const clearChatButton = document.querySelector("#clearChatButton");
 const locationButton = document.querySelector("#locationButton");
 const locationLabel = document.querySelector("#locationLabel");
 const voiceButton = document.querySelector("#voiceButton");
-const readAloudButton = document.querySelector("#readAloudButton");
 const welcomeMessage = messages.firstElementChild.cloneNode(true);
 
 const { escapeHtml, renderMarkdown } = window.NearbyGoMarkdown;
@@ -95,66 +90,6 @@ function stripReasoning(value) {
   }
 
   return result.trimStart();
-}
-
-function updateReadAloudButton() {
-  readAloudButton.textContent = state.readAloud ? "🔊 自动朗读" : "🔇 已静音";
-  readAloudButton.setAttribute("aria-pressed", String(state.readAloud));
-}
-
-function stopSpeaking() {
-  window.speechSynthesis?.cancel();
-  if (state.audio) {
-    state.audio.pause();
-    URL.revokeObjectURL(state.audio.src);
-    state.audio = null;
-  }
-}
-
-function plainTextForSpeech(value) {
-  return String(value || "")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/[#>*_`~-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 4000);
-}
-
-function browserReadAloud(value) {
-  if (!state.readAloud || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
-  const text = plainTextForSpeech(value);
-  if (!text) return;
-  stopSpeaking();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-CN";
-  utterance.rate = 1;
-  window.speechSynthesis.speak(utterance);
-}
-
-function decodeBase64Chunk(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-async function playDifySpeech() {
-  if (!state.readAloud || !state.ttsChunks.length) return;
-  stopSpeaking();
-  const url = URL.createObjectURL(new Blob(state.ttsChunks, { type: "audio/mpeg" }));
-  state.ttsChunks = [];
-  state.audio = new Audio(url);
-  state.audio.addEventListener("ended", () => {
-    URL.revokeObjectURL(url);
-    state.audio = null;
-  }, { once: true });
-  try {
-    await state.audio.play();
-  } catch {
-    URL.revokeObjectURL(url);
-    state.audio = null;
-  }
 }
 
 function addMessage(role, text = "") {
@@ -243,15 +178,6 @@ function locate() {
 
 function handleEvent(event) {
   if (event.conversation_id) state.conversationId = event.conversation_id;
-  if (event.event === "tts_message" && event.audio) {
-    state.ttsReceived = true;
-    if (state.readAloud) state.ttsChunks.push(decodeBase64Chunk(event.audio));
-    return "";
-  }
-  if (event.event === "tts_message_end") {
-    void playDifySpeech();
-    return "";
-  }
   if (["message", "agent_message"].includes(event.event) && event.answer) return event.answer;
   if (event.event === "workflow_finished" && event.data?.status === "failed") {
     throw new Error(event.data.error || "Dify 工作流执行失败");
@@ -278,8 +204,6 @@ async function sendQuery(query) {
   sendButton.disabled = true;
   clearChatButton.disabled = true;
   voiceButton.disabled = true;
-  state.ttsChunks = [];
-  state.ttsReceived = false;
   input.value = "";
   addMessage("user", query);
   const answerBubble = addMessage("assistant", "");
@@ -330,7 +254,6 @@ async function sendQuery(query) {
       answerBubble.innerHTML = "<p>暂时没有取得推荐，请稍后重试。</p>";
     } else {
       rememberTurn(query, answer);
-      if (!state.ttsReceived) browserReadAloud(answer);
     }
   } catch (error) {
     answerBubble.classList.remove("typing");
@@ -493,11 +416,4 @@ messages.addEventListener("click", (event) => {
 locationButton.addEventListener("click", locate);
 clearChatButton.addEventListener("click", clearChatMemory);
 voiceButton.addEventListener("click", toggleRecording);
-readAloudButton.addEventListener("click", () => {
-  state.readAloud = !state.readAloud;
-  localStorage.setItem("nearbygo-read-aloud", String(state.readAloud));
-  if (!state.readAloud) stopSpeaking();
-  updateReadAloudButton();
-});
-updateReadAloudButton();
 locate();

@@ -360,7 +360,7 @@ workflow:
 
           只提取用户明确表达或可确定换算的条件，不得把常识猜测成用户偏好。
 
-          categories 只能优先使用：美食、餐厅、咖啡、购物、娱乐、电影、景点、公园。
+          categories 只能优先使用：美食、餐厅、咖啡、购物、娱乐、电影、景点、公园。洗脚、足疗、按摩、洗浴、汗蒸、采耳、KTV、网吧、酒吧、清吧、密室、剧本杀、桌游、台球、美甲、美发等具体业态不属于这八类，一律放入 keywords，不要塞进 categories。
 
           “吃饭加游玩”“餐饮+景点”等复合需求必须同时提取餐饮类和游玩类，不能只保留餐饮类。
 
@@ -593,19 +593,18 @@ workflow:
 
               days_number = as_number(duration_days)
               days = int(days_number) if days_number else None
-              if days is None:
-                  day_match = re.search(r'(\d+)\s*(?:天|日)', query_text)
-                  chinese_days = {'一': 1, '两': 2, '二': 2, '三': 3, '四': 4,
-                                  '五': 5, '六': 6, '七': 7}
-                  chinese_match = re.search(r'([一两二三四五六七])\s*(?:天|日)', query_text)
-                  if day_match:
-                      days = int(day_match.group(1))
-                  elif chinese_match:
-                      days = chinese_days[chinese_match.group(1)]
-                  elif '周末' in query_text or '多日' in query_text:
-                      days = 2
-                  else:
-                      days = 1
+              day_match = re.search(r'(?<!第)(\d+)\s*(?:天|日)', query_text)
+              chinese_days = {'一': 1, '两': 2, '二': 2, '三': 3, '四': 4,
+                              '五': 5, '六': 6, '七': 7}
+              chinese_match = re.search(r'(?<!第)([一两二三四五六七])\s*(?:天|日)', query_text)
+              if day_match:
+                  days = int(day_match.group(1))
+              elif chinese_match:
+                  days = chinese_days[chinese_match.group(1)]
+              elif '周末' in query_text or '多日' in query_text:
+                  days = 2
+              elif days is None:
+                  days = 1
               days = min(7, max(1, days))
 
               if days > 1:
@@ -614,7 +613,11 @@ workflow:
                   if not any(x in {'购物', '娱乐', '电影', '景点', '公园'} for x in normalized_categories):
                       normalized_categories.extend(['景点', '娱乐', '公园'])
 
-              mode = transport if transport in ('walking', 'driving') else 'walking'
+              transport_match = re.search(r'(步行|走路|散步|开车|驾车|自驾|打车|乘车)', query_text)
+              if transport_match:
+                  mode = 'driving' if transport_match.group(1) in ('开车', '驾车', '自驾', '打车', '乘车') else 'walking'
+              else:
+                  mode = transport if transport in ('walking', 'driving') else 'walking'
               radius_number = as_number(radius_meters)
               radius = int(radius_number) if radius_number else None
               if radius is None:
@@ -631,6 +634,9 @@ workflow:
 
               duration_number = as_number(duration_minutes)
               duration = int(duration_number) if duration_number else None
+              combined_match = re.search(r'(\d+)\s*(?:小时|个小时)\s*(\d+)\s*分钟', query_text)
+              if combined_match:
+                  duration = int(combined_match.group(1)) * 60 + int(combined_match.group(2))
               if duration is None:
                   travel_minutes_mentioned = re.search(
                       r'(?:步行|走路|开车|驾车|自驾)\s*\d+\s*分钟', query_text
@@ -713,7 +719,20 @@ workflow:
                   notes.append('用户提到的交通方式暂不在实时路线接口支持范围内，当前后端按步行模式检索。')
               notes = as_list(notes, 5)
 
+              keyword_list = as_list(keywords, 10)
+              niche_terms = ('洗脚', '足疗', '足浴', '洗浴', '汗蒸', '桑拿', '按摩', '推拿', '采耳',
+                             'ktv', '网吧', '酒吧', '清吧', '密室', '剧本杀', '桌游', '台球',
+                             '电玩', '游泳', '健身', '瑜伽', '美甲', '美睫', '美发', '理发', 'spa')
+              query_lower = query_text.lower()
+              for term in niche_terms:
+                  if term in query_lower and not any(term in str(item).lower() for item in keyword_list):
+                      keyword_list.append(term)
+              keyword_list = as_list(keyword_list, 10)
+
               budget = as_number(budget_per_person)
+              budget_match = re.search(r'人均\s*(\d+(?:\.\d+)?)\s*(?:元|块)', query_text)
+              if budget is None and budget_match:
+                  budget = float(budget_match.group(1))
               if budget is not None:
                   budget = min(100000, max(0, budget))
               size_number = as_number(party_size)
@@ -725,7 +744,7 @@ workflow:
                   'latitude': lat,
                   'coordinate_system': coordinate_system if coordinate_system in ('gps', 'autonavi', 'baidu', 'mapbar') else 'gps',
                   'categories': list(dict.fromkeys(normalized_categories)),
-                  'keywords': as_list(keywords, 10),
+                  'keywords': keyword_list,
                   'preferences': positive_preferences,
                   'budget_per_person': budget,
                   'radius_meters': radius,
@@ -735,7 +754,7 @@ workflow:
                   'result_count': result_count,
               }
               context = {
-                  'plan_mode': inferred_plan,
+                  'response_mode': inferred_plan,
                   'decision_priority': priority,
                   'party_size': size,
                   'companion_profile': companions,
@@ -1140,6 +1159,28 @@ workflow:
                   except (TypeError, ValueError, json.JSONDecodeError):
                       return {}
 
+              def compact_place(place):
+                  dropped = ('longitude', 'latitude', 'score', 'poi_id', 'image_urls')
+                  return {key: value for key, value in place.items() if key not in dropped}
+
+              def compact_segment(segment):
+                  if not isinstance(segment, dict):
+                      return {}
+                  return {key: value for key, value in segment.items() if key != 'route_polyline'}
+
+              def compact_day(day):
+                  if not isinstance(day, dict):
+                      return {}
+                  compacted = {key: value for key, value in day.items()}
+                  stops = compacted.get('stops')
+                  if isinstance(stops, list):
+                      compacted['stops'] = [
+                          {**stop, 'segment': compact_segment(stop.get('segment'))}
+                          if isinstance(stop, dict) else stop
+                          for stop in stops
+                      ]
+                  return compacted
+
               try:
                   status = int(status_code) if status_code not in (None, '') else 200
               except (TypeError, ValueError):
@@ -1152,7 +1193,7 @@ workflow:
                   result = {
                       'response_state': 'service_error',
                       'quality_notes': ['附近数据服务暂时不可用或返回了无法解析的数据。'],
-                      'data': {'places': [], 'itinerary_days': [], 'warnings': []},
+                      'data': {'places': [], 'additional_places': [], 'itinerary_days': [], 'warnings': []},
                   }
                   return {
                       'validated_result': json.dumps(result, ensure_ascii=False),
@@ -1161,6 +1202,8 @@ workflow:
                   }
 
               places = payload.get('places') if isinstance(payload.get('places'), list) else []
+              additional = payload.get('additional_places') if isinstance(payload.get('additional_places'), list) else []
+              itinerary = payload.get('itinerary') if isinstance(payload.get('itinerary'), list) else []
               itinerary_days = payload.get('itinerary_days') if isinstance(payload.get('itinerary_days'), list) else []
               warnings = payload.get('warnings') if isinstance(payload.get('warnings'), list) else []
               if not places:
@@ -1188,19 +1231,39 @@ workflow:
                   notes.append('候选文本与用户避雷项存在字面匹配，不能把这些候选当作已确认满足约束。')
               if warnings and state == 'ready':
                   state = 'partial'
-              if not itinerary_days and context.get('plan_mode') in ('itinerary', 'multi_day'):
+              if not itinerary_days and context.get('response_mode') in ('itinerary', 'multi_day'):
                   notes.append('用户请求了行程，但接口没有生成可用的分日计划。')
               if context.get('location_source') == 'fallback':
                   notes.append('未取得有效浏览器坐标，本次使用默认位置进行检索。')
               if context.get('decision_priority') not in (None, '', 'balanced'):
                   notes.append('后端使用距离、评分、预算、偏好与来源顺序的综合排序；用户决策偏好只用于解释，不能声称已改变后端权重。')
 
+              unverified = []
+              dietary = context.get('dietary_needs') if isinstance(context.get('dietary_needs'), list) else []
+              accessibility = context.get('accessibility_needs') if isinstance(context.get('accessibility_needs'), list) else []
+              if dietary:
+                  unverified.append({'type': '饮食要求', 'values': [str(item) for item in dietary]})
+              if accessibility:
+                  unverified.append({'type': '可达性要求', 'values': [str(item) for item in accessibility]})
+
+              compact_data = {
+                  'transport': payload.get('transport'),
+                  'places': [compact_place(p) for p in places if isinstance(p, dict)],
+                  'additional_places': [compact_place(p) for p in additional if isinstance(p, dict)],
+                  'itinerary': [compact_segment(s) for s in itinerary],
+                  'itinerary_days': [compact_day(d) for d in itinerary_days if isinstance(d, dict)],
+                  'planning_assumptions': payload.get('planning_assumptions')
+                      if isinstance(payload.get('planning_assumptions'), list) else [],
+                  'warnings': warnings,
+              }
+
               result = {
                   'response_state': state,
                   'quality_notes': notes,
                   'constraint_conflicts': conflicts,
+                  'unverified_constraints': unverified,
                   'request_context': context,
-                  'data': payload,
+                  'data': compact_data,
               }
               return {
                   'validated_result': json.dumps(result, ensure_ascii=False),
@@ -1273,8 +1336,8 @@ workflow:
                   map_url = urljoin(base_url, route_path.lstrip('/'))
                   blocks.extend([
                       '## 高德位置概览',
-                      f'![附近候选与行程顺序示意]({map_url})',
-                      '> 地图连线只表示行程顺序，不是实际道路轨迹；出发时以高德导航为准。',
+                      f'![附近候选与实际路线示意]({map_url})',
+                      '> 地图已按高德实际路线绘制；未取得路线的路段以直线示意，导航请以高德 App 实时路线为准。',
                   ])
 
               transport = '🚗 驾车' if payload.get('transport') == 'driving' else '🚶 步行'
@@ -1293,6 +1356,31 @@ workflow:
                   summaries.append(f'- {transport}：{start} → {end}（{detail}）')
               if summaries:
                   blocks.extend(['### 路线摘要'] + summaries)
+
+              additional = payload.get('additional_places') if isinstance(payload.get('additional_places'), list) else []
+              one_liners = []
+              for place in additional:
+                  if not isinstance(place, dict):
+                      continue
+                  name = safe_text(place.get('name'), 30) or '附近地点'
+                  category = str(place.get('category') or '').split(';')[-1].strip()
+                  details = [category] if category else []
+                  distance = place.get('straight_distance_meters')
+                  if isinstance(distance, (int, float)):
+                      details.append(f'直线约 {round(distance)} 米')
+                  rating = place.get('rating')
+                  if isinstance(rating, (int, float)):
+                      details.append(f'评分 {rating}')
+                  cost = place.get('cost_per_person')
+                  if isinstance(cost, (int, float)):
+                      details.append(f'人均 {round(cost)} 元')
+                  url = str(place.get('navigation_url') or '')
+                  line = f'- **{name}**（' + '、'.join(details) + '）'
+                  if url.startswith('https://uri.amap.com/'):
+                      line += f' — [高德导航]({url})'
+                  one_liners.append(line)
+              if one_liners:
+                  blocks.extend(['### 其他候选'] + one_liners)
 
               photos = []
               places = payload.get('places') if isinstance(payload.get('places'), list) else []
@@ -1390,14 +1478,16 @@ workflow:
 
             dietary_needs、accessibility_needs、companion_profile、ambience、avoid_terms 和 special_notes 是用户约束，不代表候选已经满足。只有地点的 name/category/tags/address 明确支持时才能说“数据中可见匹配”；否则写“需向商家/场所确认”。清真、过敏原、无障碍、宠物友好、婴儿设施等安全或可达性要求永远不得仅凭常识确认。
 
+            unverified_constraints 列出尚未在候选数据中验证的用户约束（如饮食、可达性要求），涉及安全时必须提醒用户向商家核实，不得当作已满足。足疗、按摩、洗浴、KTV、网吧等正常生活服务候选，只要数据中存在就按普通候选如实推荐，不得拒绝回答或附加无关评判。
+
             不要猜门票、开放时间、菜品、历史背景、景观特色、活动、排队、天气、住宿、停车、预约、价格、评分、距离或耗时。planning_assumptions、planning_basis 和 warnings 中的核实提醒不得改写成地点事实。
 
             【自动选择回答形态】
-            根据 request_context.plan_mode 组织内容：
+            根据 request_context.response_mode 组织内容：
 
             memory_only：此规则优先于地点数据状态；不要提及定位、附近数据服务、候选、路线或导航。memory_notice 非空时简洁确认已执行的更新/删除/清空；用户询问“你记得什么”时，按正向偏好、避雷、饮食、可达性、同行画像分组概括 long_term_profile，仅显示非空项。画像为空时明确说当前没有长期偏好，并提示只有明确说“记住……”才会写入。
 
-            quick_pick：先用一句“首选结论”直接选出综合排序最靠前且与已知条件不冲突的候选；随后给出 2 至 3 张简洁决策卡，每张包含“为什么适合、已知事实、需要核实、导航”。最后给一句“切换规则”，例如更看重距离/预算时应选哪个，但只能比较真实字段。
+            quick_pick：先用一句“首选结论”直接选出综合排序最靠前且与已知条件不冲突的候选；随后给出 2 至 3 张简洁决策卡，每张包含“为什么适合、已知事实、需要核实、导航”。其余候选由系统在回答后自动以“其他候选”一句话列表附出并带导航链接，你不要重复罗列、编造或改写这些候选和链接。最后给一句“切换规则”，例如更看重距离/预算时应选哪个，但只能比较真实字段。
 
             compare：选择最多 4 个实际候选，逐个写“适合谁、优势、取舍、已知数据、导航”，再根据 decision_priority 给出有条件结论。若用户偏好与后端综合排序权重不同，要说明这是解释侧的选择视角，不能声称后端已按该单项重排。
 
