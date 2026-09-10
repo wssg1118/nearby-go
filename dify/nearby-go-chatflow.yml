@@ -1448,11 +1448,12 @@ workflow:
                   segment = itinerary[index - 1] if index - 1 < len(itinerary) else None
                   table_rows.append(f'| {index} | {name_cell} | {rating_cell} | {cost_cell} | {place_distance(place, segment)} |')
               if table_rows:
-                  blocks.extend([
+                  # 表格行之间不能有空行，否则 markdown 不会按表格渲染
+                  blocks.append('\n'.join([
                       '### 对比一览',
                       '| 排名 | 推荐 | 评分 | 人均 | 距离·时间 |',
                       '| --- | --- | --- | --- | --- |',
-                  ] + table_rows)
+                  ] + table_rows))
 
               additional = payload.get('additional_places') if isinstance(payload.get('additional_places'), list) else []
               one_liners = []
@@ -1477,7 +1478,7 @@ workflow:
                       line += f' — [高德导航]({url})'
                   one_liners.append(line)
               if one_liners:
-                  blocks.extend(['### 其他候选'] + one_liners)
+                  blocks.append('\n'.join(['### 其他候选'] + one_liners))
 
               def slim_place(place, index):
                   urls = place.get('image_urls') if isinstance(place.get('image_urls'), list) else []

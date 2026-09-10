@@ -191,13 +191,16 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> tuple[str, list[dic
             f"| {index} | {name_cell} | {rating_cell} | {cost_cell} | {place_distance(place, segment)} |"
         )
     if table_rows:
-        blocks.extend(
-            [
-                "### 对比一览",
-                "| 排名 | 推荐 | 评分 | 人均 | 距离·时间 |",
-                "| --- | --- | --- | --- | --- |",
-                *table_rows,
-            ]
+        # Table rows must be contiguous or markdown won't render them as a table.
+        blocks.append(
+            "\n".join(
+                [
+                    "### 对比一览",
+                    "| 排名 | 推荐 | 评分 | 人均 | 距离·时间 |",
+                    "| --- | --- | --- | --- | --- |",
+                    *table_rows,
+                ]
+            )
         )
 
     additional = (
@@ -227,7 +230,7 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> tuple[str, list[dic
             line += f" — [高德导航]({url})"
         one_liners.append(line)
     if one_liners:
-        blocks.extend(["### 其他候选", *one_liners])
+        blocks.append("\n".join(["### 其他候选", *one_liners]))
 
     def slim_place(place: dict[str, object], index: int) -> dict[str, object]:
         urls = place.get("image_urls") if isinstance(place.get("image_urls"), list) else []

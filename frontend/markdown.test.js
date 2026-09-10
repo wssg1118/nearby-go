@@ -94,8 +94,8 @@ test("renders comparison tables with safe links and stops at non-table lines", (
   assert.match(html, /<th>排名<\/th><th>推荐<\/th><th>评分<\/th>/);
   assert.match(html, /<td>1<\/td><td><a href="https:\/\/uri\.amap\.com\/navigation\?to=p1"[^>]*>清芬园<\/a><\/td><td>4\.7<\/td>/);
   assert.ok(!html.includes('href="javascript:'));
-  // 缺分隔行的孤立管道行按段落处理，不再并入表格
-  assert.match(html, /<p>/);
+  // 空行分隔的管道行会粘连进同一张表（LLM 表格容错），javascript: 链接被 neutralize
+  assert.match(html, /<td>\[坏店\]\(javascript:alert\(1\)\)<\/td>/);
 });
 
 test("renders LLM pipe tables that miss the divider row and pads uneven columns", () => {
@@ -115,4 +115,23 @@ test("renders LLM pipe tables that miss the divider row and pads uneven columns"
   assert.match(html, /<td>2<\/td><td>七港九<\/td>/);
   assert.match(html, /<p>后续普通文本 \| 含一个管道也不算表<\/p>/);
   assert.ok(!html.includes("clear"));
+});
+
+test("still renders a table when rows are separated by blank lines", () => {
+  const html = renderMarkdown(
+    [
+      "### 对比一览",
+      "",
+      "| 排名 | 推荐 | 评分 |",
+      "",
+      "| --- | --- | --- |",
+      "",
+      "| 1 | 清芬园 | 4.7 |",
+    ].join("\n"),
+  );
+
+  assert.match(html, /<div class="table-wrap"><table>/);
+  assert.match(html, /<th>排名<\/th>/);
+  assert.match(html, /<td>清芬园<\/td>/);
+  assert.ok(!html.match(/<p>\s*\|/));
 });

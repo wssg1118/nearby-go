@@ -132,7 +132,12 @@
   }
 
   function renderMarkdown(value) {
-    const lines = String(value || "").replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+    // LLM 输出的表格行之间可能被空行分隔，粘连后才能按表格渲染
+    const normalized = String(value || "")
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n")
+      .replace(/(\|[^\n]*\|)\n\n(?=\|)/g, "$1\n");
+    const lines = normalized.split("\n");
     const blocks = [];
     let index = 0;
 
