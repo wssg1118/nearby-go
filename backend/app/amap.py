@@ -78,6 +78,18 @@ class AmapClient:
         lng, lat = converted.split(",")
         return float(lng), float(lat)
 
+    async def reverse_geocode(
+        self, longitude: float, latitude: float
+    ) -> str:
+        """Resolve coordinates into a readable location name (regeo, ~100m precision)."""
+        payload = await self._get(
+            "/v3/geocode/regeo",
+            {"location": f"{longitude:.6f},{latitude:.6f}"},
+        )
+        regeocode = payload.get("regeocode") if isinstance(payload.get("regeocode"), dict) else {}
+        address = str(regeocode.get("formatted_address") or "").strip()
+        return address[:80]
+
     async def search_around(
         self,
         longitude: float,

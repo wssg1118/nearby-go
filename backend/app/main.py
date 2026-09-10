@@ -10,14 +10,14 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .amap import AmapClient, AmapError
 from .config import Settings, get_settings
-from .dify import DifyError, stream_chat, transcribe_audio
+from .dify import DifyError, stream_chat
 from .models import ChatRequest, RecommendationRequest, RecommendationResponse
 from .recommendations import build_recommendations
 
@@ -203,7 +203,7 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
         blocks.extend(["### 其他候选", *one_liners])
 
     places = payload.get("places") if isinstance(payload.get("places"), list) else []
-    photos: list[str] = []
+    photos: list[dict[str, object]] = []
     for index, place in enumerate(places, start=1):
         if not isinstance(place, dict):
             continue
@@ -217,18 +217,59 @@ def _travel_cards(raw_payload: str, public_base_url: str) -> str:
         except ValueError:
             continue
         if parsed.scheme == "https" and parsed.netloc:
-            photos.append(f"![{index}·{name}]({parsed.geturl()})")
-    if photos:
-        blocks.extend(["### 推荐地点图片", *photos])
-    return "\n\n".join(blocks)
+            photos.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "image_url": parsed.geturl(),
+                    "navigation_url": str(place.get("navigation_url") or ""),
+                }
+            )
+    return "\n\n".join(blocks), photos
+
+
+def _inject_place_photos(explain_text: str, visual_cards: str, photos: list[dict[str, object]]) -> str:
+    """Mirror of the Dify inject_photos node: attach each photo under its recommendation."""
+    lines = explain_text.strip().split("\n") if explain_text.strip() else []
+    consumed: set[int] = set()
+    unmatched: list[str] = []
+    for photo in photos:
+        image_url = str(photo.get("image_url") or "")
+        if not image_url.startswith("https://"):
+            continue
+        photo_line = f"![{photo.get('index', '')}·{photo.get('name', '附近地点')}]({image_url})"
+        nav_url = str(photo.get("navigation_url") or "")
+        target = None
+        if nav_url.startswith("https://"):
+            for position, line in enumerate(lines):
+                if position in consumed or nav_url not in line:
+                    continue
+                target = position
+                break
+        if target is not None:
+            consumed.add(target)
+            lines[target] = lines[target].rstrip() + "\n\n" + photo_line
+        else:
+            unmatched.append(photo_line)
+    if unmatched:
+        lines.extend(["", "### 推荐地点图片", *unmatched])
+    cards = visual_cards.strip()
+    return "\n".join(lines) + (f"\n\n{cards}" if cards else "")
 
 
 def verify_internal_token(
     x_internal_token: str = Header(default=""),
     config: Settings = Depends(get_settings),
 ) -> None:
-    if not config.internal_api_token or x_internal_token != config.internal_api_token:
-        raise HTTPException(status_code=401, detail="无效的内部调用凭据")
+    if not config.internal_api_token:
+        raise HTTPException(
+            status_code=503, detail="服务端未配置 INTERNAL_API_TOKEN，暂时无法生成推荐"
+        )
+    if x_internal_token != config.internal_api_token:
+        raise HTTPException(
+            status_code=401,
+            detail="无效的内部调用凭据：请检查 Dify 环境变量 INTERNAL_API_TOKEN 与后端是否一致",
+        )
 
 
 @app.get("/api/health")
@@ -249,6 +290,10 @@ async def chat(
     request: Request,
     config: Settings = Depends(get_settings),
 ) -> StreamingResponse:
+    resolved_name = await resolve_location_name(payload, request, config)
+    if resolved_name and not payload.position_name.strip():
+        payload = payload.model_copy(update={"position_name": resolved_name})
+
     async def generate():
         try:
             async for chunk in stream_chat(payload, request.app.state.http, config):
@@ -266,43 +311,33 @@ async def chat(
     )
 
 
-@app.post("/api/audio-to-text")
-async def audio_to_text(
-    request: Request,
-    audio: UploadFile = File(...),
-    user: str = Header(default="", alias="X-NearbyGo-User"),
-    config: Settings = Depends(get_settings),
-) -> dict[str, str]:
-    if not user or len(user) > 128:
-        raise HTTPException(status_code=400, detail="无效的用户标识")
-    allowed_types = {
-        "audio/mpeg",
-        "audio/mp3",
-        "audio/mp4",
-        "audio/m4a",
-        "audio/wav",
-        "audio/x-wav",
-        "audio/webm",
-        "video/webm",
-    }
-    content_type = (audio.content_type or "application/octet-stream").split(";", 1)[0].lower()
-    if content_type not in allowed_types:
-        raise HTTPException(status_code=415, detail="不支持的录音格式")
-    content = await audio.read(15 * 1024 * 1024 + 1)
-    if not content or len(content) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="录音为空或超过 15MB")
+_regeo_cache: dict[tuple[float, float], str] = {}
+
+
+async def resolve_location_name(
+    payload: ChatRequest, request: Request, config: Settings
+) -> str:
+    """Prefer the user-picked place name; otherwise reverse-geocode browser coordinates."""
+    if payload.position_name.strip():
+        return payload.position_name.strip()[:80]
+    if payload.longitude is None or payload.latitude is None:
+        return ""
+    key = (round(payload.longitude, 3), round(payload.latitude, 3))
+    cached = _regeo_cache.get(key)
+    if cached:
+        return cached
+    if not config.amap_web_service_key:
+        return ""
+    amap = AmapClient(request.app.state.http, config.amap_web_service_key)
     try:
-        text = await transcribe_audio(
-            content=content,
-            filename=Path(audio.filename or "voice.webm").name,
-            content_type=content_type,
-            user=user,
-            http=request.app.state.http,
-            settings=config,
-        )
-    except DifyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"text": text}
+        name = await amap.reverse_geocode(*key)
+    except AmapError:
+        return ""
+    if name:
+        _regeo_cache[key] = name
+        if len(_regeo_cache) > 512:
+            _regeo_cache.pop(next(iter(_regeo_cache)))
+    return name
 
 
 _PLACE_SEARCH_LIMIT = 30

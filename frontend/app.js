@@ -107,9 +107,6 @@ const state = {
   position: null,
   user: localStorage.getItem("nearbygo-user") || crypto.randomUUID(),
   busy: false,
-  recorder: null,
-  recognition: null,
-  recordingChunks: [],
 };
 localStorage.setItem("nearbygo-user", state.user);
 
@@ -120,7 +117,6 @@ const sendButton = document.querySelector("#sendButton");
 const clearChatButton = document.querySelector("#clearChatButton");
 const locationButton = document.querySelector("#locationButton");
 const locationLabel = document.querySelector("#locationLabel");
-const voiceButton = document.querySelector("#voiceButton");
 const welcomeMessage = messages.firstElementChild.cloneNode(true);
 const historyButton = document.querySelector("#historyButton");
 const historyPanel = document.querySelector("#historyPanel");
@@ -377,7 +373,6 @@ async function sendQuery(query) {
   state.busy = true;
   sendButton.disabled = true;
   clearChatButton.disabled = true;
-  voiceButton.disabled = true;
   input.value = "";
   addMessage("user", query);
   const answerBubble = addMessage("assistant", "");
@@ -397,6 +392,7 @@ async function sendQuery(query) {
               latitude: state.position.latitude,
               ...(state.position.accuracy ? { accuracy: state.position.accuracy } : {}),
               coordinate_system: state.position.coordinate_system || "gps",
+              ...(state.position.name ? { position_name: state.position.name } : {}),
             }
           : {}),
         conversation_id: currentSession().conversationId,
@@ -442,130 +438,8 @@ async function sendQuery(query) {
     state.busy = false;
     sendButton.disabled = false;
     clearChatButton.disabled = false;
-    voiceButton.disabled = false;
     persistSessions();
     input.focus();
-  }
-}
-
-function preferredRecordingType() {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  return candidates.find((type) => window.MediaRecorder?.isTypeSupported(type)) || "";
-}
-
-function browserRecognitionConstructor() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
-function resetVoiceButton() {
-  voiceButton.classList.remove("recording");
-  voiceButton.setAttribute("aria-label", "按下语音输入");
-  voiceButton.textContent = "🎙️";
-}
-
-function startBrowserRecognition(Recognition) {
-  const recognition = new Recognition();
-  state.recognition = recognition;
-  recognition.lang = "zh-CN";
-  recognition.continuous = false;
-  recognition.interimResults = true;
-
-  recognition.addEventListener("start", () => {
-    voiceButton.classList.add("recording");
-    voiceButton.setAttribute("aria-label", "停止语音识别");
-  });
-  recognition.addEventListener("result", (event) => {
-    let transcript = "";
-    for (let index = 0; index < event.results.length; index += 1) {
-      transcript += event.results[index][0]?.transcript || "";
-    }
-    input.value = transcript.trim();
-    input.dispatchEvent(new Event("input"));
-  });
-  recognition.addEventListener("error", (event) => {
-    if (!["aborted", "no-speech"].includes(event.error)) {
-      window.alert(`语音识别失败：${event.error || "请检查麦克风权限"}`);
-    }
-  });
-  recognition.addEventListener("end", () => {
-    state.recognition = null;
-    resetVoiceButton();
-    input.focus();
-  }, { once: true });
-  recognition.start();
-}
-
-async function transcribeRecording(blob) {
-  voiceButton.disabled = true;
-  voiceButton.textContent = "…";
-  const data = new FormData();
-  const extension = blob.type.includes("mp4") ? "m4a" : "webm";
-  data.append("audio", blob, `voice.${extension}`);
-  try {
-    const response = await fetch("/api/audio-to-text", {
-      method: "POST",
-      headers: { "X-NearbyGo-User": state.user },
-      body: data,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.detail || `语音识别返回 ${response.status}`);
-    input.value = String(payload.text || "");
-    input.dispatchEvent(new Event("input"));
-    input.focus();
-  } catch (error) {
-    window.alert(`录音识别失败：${error.message}`);
-  } finally {
-    voiceButton.disabled = false;
-    voiceButton.textContent = "🎙️";
-  }
-}
-
-async function toggleRecording() {
-  if (state.busy) return;
-  if (state.recognition) {
-    state.recognition.stop();
-    return;
-  }
-  if (state.recorder?.state === "recording") {
-    state.recorder.stop();
-    return;
-  }
-  const Recognition = browserRecognitionConstructor();
-  if (Recognition) {
-    try {
-      startBrowserRecognition(Recognition);
-    } catch {
-      resetVoiceButton();
-      window.alert("无法启动语音识别，请检查浏览器麦克风权限。");
-    }
-    return;
-  }
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    window.alert("当前浏览器不支持语音输入，请使用 Chrome、Edge 或 Safari 新版本。");
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = preferredRecordingType();
-    state.recordingChunks = [];
-    state.recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    state.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size) state.recordingChunks.push(event.data);
-    });
-    state.recorder.addEventListener("stop", () => {
-      resetVoiceButton();
-      stream.getTracks().forEach((track) => track.stop());
-      const blob = new Blob(state.recordingChunks, { type: state.recorder.mimeType || "audio/webm" });
-      void transcribeRecording(blob);
-    }, { once: true });
-    state.recorder.start();
-    voiceButton.classList.add("recording");
-    voiceButton.setAttribute("aria-label", "停止录音并识别");
-    window.setTimeout(() => {
-      if (state.recorder?.state === "recording") state.recorder.stop();
-    }, 60000);
-  } catch {
-    window.alert("无法使用麦克风，请检查浏览器权限。");
   }
 }
 
@@ -685,5 +559,4 @@ useBrowserLocationButton.addEventListener("click", () => {
   locate();
 });
 clearChatButton.addEventListener("click", startNewSession);
-voiceButton.addEventListener("click", toggleRecording);
 locate();

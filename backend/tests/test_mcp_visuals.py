@@ -90,6 +90,8 @@ def test_route_map_path_requires_secret_and_places():
 
 
 def test_mcp_visual_cards_include_map_transport_and_only_https_images():
+    from app.main import _inject_place_photos
+
     payload = {
         "transport": "walking",
         "route_map_path": "/api/route-map?points=signed&sig=value",
@@ -106,6 +108,7 @@ def test_mcp_visual_cards_include_map_transport_and_only_https_images():
             {
                 "name": "测试]（不可信）",
                 "image_urls": ["https://store.is.autonavi.com/photo.jpg"],
+                "navigation_url": "https://uri.amap.com/navigation?to=p1",
             },
             {"name": "坏图", "image_urls": ["javascript:alert(1)"]},
         ],
@@ -119,19 +122,29 @@ def test_mcp_visual_cards_include_map_transport_and_only_https_images():
             }
         ],
     }
-    cards = _travel_cards(json.dumps(payload, ensure_ascii=False), "https://guide.example.com")
+    cards, photos = _travel_cards(json.dumps(payload, ensure_ascii=False), "https://guide.example.com")
 
     assert "https://guide.example.com/api/route-map?" in cards
     assert "![map:附近候选与实际路线示意]" in cards
     assert "🚶 步行" in cards
-    assert "### 推荐地点图片" in cards
-    # 图片与推荐一一对应：编号·名称，坏图被跳过
-    assert "![1·测试" in cards
-    assert "![2·坏图]" not in cards
-    assert "https://store.is.autonavi.com/photo.jpg" in cards
+    # 地点图片改为结构化输出，由注入节点插入到对应推荐下方
+    assert "推荐地点图片" not in cards
+    assert photos == [
+        {
+            "index": 1,
+            "name": "测试 （不可信）",
+            "image_url": "https://store.is.autonavi.com/photo.jpg",
+            "navigation_url": "https://uri.amap.com/navigation?to=p1",
+        }
+    ]
     assert "javascript:" not in cards
     assert "其他候选" in cards
     assert "备选咖啡" in cards
     assert "咖啡厅" in cards
     assert "直线约 900 米" in cards
     assert "https://uri.amap.com/navigation?to=116.3,40.0" in cards
+
+    explain = "**1. 测试公园** 适合散步。[打开高德导航](https://uri.amap.com/navigation?to=p1)"
+    answer = _inject_place_photos(explain, cards, photos)
+    assert "[打开高德导航](https://uri.amap.com/navigation?to=p1)\n\n![1·测试 （不可信）](https://store.is.autonavi.com/photo.jpg)" in answer
+    assert "推荐地点图片" not in answer

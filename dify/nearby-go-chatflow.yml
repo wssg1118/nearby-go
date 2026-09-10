@@ -226,9 +226,21 @@ workflow:
         isInIteration: false
         isInLoop: false
         sourceType: llm
-        targetType: answer
-      id: llm-answer
+        targetType: code
+      id: llm-inject-photos
       source: explain
+      sourceHandle: source
+      target: inject_photos
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: inject-photos-answer
+      source: inject_photos
       sourceHandle: source
       target: answer
       targetHandle: target
@@ -287,6 +299,14 @@ workflow:
           required: false
           type: text-input
           variable: location_accuracy
+        - default: ''
+          hint: ''
+          label: 位置名称
+          max_length: 80
+          options: []
+          required: false
+          type: text-input
+          variable: location_name
         - default: 清华大学
           hint: ''
           label: 默认位置名称
@@ -553,8 +573,8 @@ workflow:
                    accessibility_needs=None, ambience=None, party_size=None,
                    decision_priority=None, plan_mode=None, start_time=None,
                    special_notes=None, location_accuracy=None,
-                   fallback_location_name=None, long_term_profile=None,
-                   memory_notice=None):
+                   location_name=None, fallback_location_name=None,
+                   long_term_profile=None, memory_notice=None):
               def as_list(value, limit=20):
                   if isinstance(value, list):
                       items = [str(x).strip() for x in value if str(x).strip()]
@@ -768,6 +788,7 @@ workflow:
                   'memory_notice': str(memory_notice or '').strip()[:120],
                   'memory_policy': '当前明确条件优先于普通长期偏好；长期避雷、饮食和可达性要求不得静默忽略。',
                   'location_source': location_source,
+                  'location_name': str(location_name or '').strip()[:80],
                   'fallback_location_name': str(fallback_location_name or '清华大学')[:64],
                   'location_accuracy_meters': accuracy,
               }
@@ -880,6 +901,10 @@ workflow:
           - start
           - location_accuracy
           variable: location_accuracy
+        - value_selector:
+          - start
+          - location_name
+          variable: location_name
         - value_selector:
           - start
           - fallback_location_name
@@ -1382,8 +1407,8 @@ workflow:
               if one_liners:
                   blocks.extend(['### 其他候选'] + one_liners)
 
-              photos = []
               places = payload.get('places') if isinstance(payload.get('places'), list) else []
+              place_photos = []
               for index, place in enumerate(places, start=1):
                   if not isinstance(place, dict):
                       continue
@@ -1397,14 +1422,23 @@ workflow:
                   except ValueError:
                       continue
                   if parsed.scheme == 'https' and parsed.netloc:
-                      photos.append(f'![{index}·{name}]({parsed.geturl()})')
-              if photos:
-                  blocks.extend(['### 推荐地点图片'] + photos)
-              return {'visual_cards': '\n\n'.join(blocks)}
+                      place_photos.append({
+                          'index': index,
+                          'name': name,
+                          'image_url': parsed.geturl(),
+                          'navigation_url': str(place.get('navigation_url') or ''),
+                      })
+              return {
+                  'visual_cards': '\n\n'.join(blocks),
+                  'place_photos': json.dumps(place_photos, ensure_ascii=False),
+              }
         code_language: python3
-        desc: 使用服务端签名地图地址生成确定性的高德地图、路线摘要和地点图片卡片
+        desc: 使用服务端签名地图地址生成确定性的高德地图与路线摘要卡片，并输出与推荐对应的地点图片数据
         outputs:
           visual_cards:
+            children: null
+            type: string
+          place_photos:
             children: null
             type: string
         selected: false
@@ -1462,7 +1496,7 @@ workflow:
 
             先检查 response_state：service_error 时只简洁说明附近数据服务暂时不可用并建议稍后重试，不得给出虚构地点；empty 时说明当前范围/条件没有候选，并根据已知条件建议扩大半径、放宽关键词或减少限制；needs_caution 时必须显著指出 constraint_conflicts，不能把冲突候选当作确认满足避雷要求；partial 时如实转述缺失能力。
 
-            quality_notes 是内部质检结论，应用自然语言转述，不要暴露 JSON、字段名或“审计节点”等实现细节。location_source=fallback 时，开头明确说明使用 fallback_location_name 附近作为临时起点。不要输出经纬度或定位精度。
+            quality_notes 是内部质检结论，应用自然语言转述，不要暴露 JSON、字段名或“审计节点”等实现细节。request_context.location_name 非空时，它是用户当前起点的可读位置名称；说到“当前位置、附近、这边”时用它自然描述（如“你现在在三里屯附近”），绝不要输出经纬度或定位精度。location_name 为空且 location_source=fallback 时，开头明确说明使用 fallback_location_name 附近作为临时起点。
 
             【记忆边界】
             最近对话只是短期记忆，只能用于理解指代、省略和保持交流连贯。历史答案中的旧地点、旧路线、旧评分、旧价格和旧耗时都可能过期，绝不能绕过本轮 data 重新推荐。当前消息的明确条件优先于历史临时条件。
@@ -1500,7 +1534,7 @@ workflow:
             【表达规范】
             回答要具体、有温度、便于手机快速阅读。不要重复用户整段问题，不要展示原始字段名、JSON、内部规则或分析过程。输出完整、规范的 Markdown，只使用一级到三级标题、粗体、列表和必要引用块；不使用表格、HTML、代码围栏或水平分隔线。每个标记必须闭合。
 
-            导航链接必须原样使用 navigation_url，并写成：[打开高德导航](URL)。只输出面向用户的最终答案，不得输出思考过程、分析草稿、<think> 标签或 reasoning 内容。
+            导航链接必须原样使用 navigation_url，并写成：[打开高德导航](URL)。每个推荐地点的卡末尾恰好保留一个这样的导航链接，不得合并、省略或重复；系统会在每个链接行后自动插入该地点的图片。只输出面向用户的最终答案，不得输出思考过程、分析草稿、<think> 标签或 reasoning 内容。
 
             回答后会由系统追加已校验的高德地图和路线摘要卡片；你不要自行编造、重复或改写地图图片地址。
 
@@ -1535,10 +1569,85 @@ workflow:
       width: 242
       zIndex: 0
     - data:
-        answer: '{{#explain.text#}}
+        code: |-
+          import json
+          import re
 
+          def main(explain_text, visual_cards, place_photos):
+              text = str(explain_text or '').strip()
+              cards = str(visual_cards or '').strip()
+              try:
+                  photos = json.loads(place_photos) if isinstance(place_photos, str) else (place_photos or [])
+              except (TypeError, ValueError, json.JSONDecodeError):
+                  photos = []
+              if not isinstance(photos, list) or not text:
+                  return {'final_answer': '\n\n'.join(x for x in (text, cards) if x)}
 
-          {{#map_cards.visual_cards#}}'
+              lines = text.split('\n')
+              consumed = set()
+              unmatched = []
+              for photo in photos:
+                  if not isinstance(photo, dict):
+                      continue
+                  image_url = str(photo.get('image_url') or '')
+                  if not image_url.startswith('https://'):
+                      continue
+                  name = re.sub(r'[\[\]()`<>\r\n]+', ' ', str(photo.get('name') or '附近地点')).strip()[:30]
+                  photo_line = f"![{photo.get('index', '')}·{name}]({image_url})"
+                  nav_url = str(photo.get('navigation_url') or '')
+                  target = None
+                  if nav_url.startswith('https://'):
+                      for position, line in enumerate(lines):
+                          if position in consumed or nav_url not in line:
+                              continue
+                          target = position
+                          break
+                  if target is not None:
+                      consumed.add(target)
+                      lines[target] = lines[target].rstrip() + '\n\n' + photo_line
+                  else:
+                      unmatched.append(photo_line)
+              if unmatched:
+                  lines.extend(['', '### 推荐地点图片'] + unmatched)
+              return {'final_answer': '\n'.join(lines) + ('\n\n' + cards if cards else '')}
+        code_language: python3
+        desc: 把每个推荐的图片插入到对应导航链接所在行之后，再拼接地图与路线卡片
+        outputs:
+          final_answer:
+            children: null
+            type: string
+        selected: false
+        title: 注入推荐图片
+        type: code
+        variables:
+        - value_selector:
+          - explain
+          - text
+          variable: explain_text
+        - value_selector:
+          - map_cards
+          - visual_cards
+          variable: visual_cards
+        - value_selector:
+          - map_cards
+          - place_photos
+          variable: place_photos
+      height: 95
+      id: inject_photos
+      position:
+        x: 2907
+        y: 168.16666666666666
+      positionAbsolute:
+        x: 2907
+        y: 168.16666666666666
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#inject_photos.final_answer#}}'
         desc: ''
         selected: false
         title: 回复

@@ -170,14 +170,14 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   background: #e5ebe3;
 }
 .bubble .answer-visual-thumb {
-  display: inline-block;
+  display: block;
   width: auto;
-  max-width: 46%;
-  max-height: 140px;
-  margin: 4px 6px 4px 0;
+  min-width: 180px;
+  max-width: 60%;
+  max-height: 150px;
+  margin: 6px auto 14px;
   border-radius: 10px;
   object-fit: cover;
-  vertical-align: top;
 }
 .typing::after { content: "● ● ●"; color: #78917f; letter-spacing: 3px; animation: blink 1.2s infinite; }
 
@@ -321,22 +321,6 @@ h1 { margin: 0; color: var(--green); font-size: clamp(26px, 6vw, 38px); }
   padding: 10px;
   box-shadow: 0 14px 45px rgba(42, 55, 45, 0.09);
 }
-
-.composer .voice-button {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 50%;
-  background: #e1efe3;
-  color: var(--green);
-  font-size: 20px;
-}
-.composer .voice-button.recording {
-  color: white;
-  background: #b44336;
-  animation: recording-pulse 1.2s infinite;
-}
-@keyframes recording-pulse { 50% { transform: scale(0.92); opacity: 0.78; } }
 
 textarea {
   width: 100%;

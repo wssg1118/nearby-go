@@ -89,7 +89,8 @@ def test_dify_dsl_uses_current_canvas_shape():
         ("recommend", "validate"),
         ("validate", "map_cards"),
         ("map_cards", "explain"),
-        ("explain", "answer"),
+        ("explain", "inject_photos"),
+        ("inject_photos", "answer"),
         ("general_chat", "general_answer"),
     ]
 
@@ -436,7 +437,20 @@ def test_explanation_prompt_requires_valid_markdown_and_honest_route_fallback():
     assert "unverified_constraints" in system_prompt
     assert explain["data"]["memory"]["window"] == {"enabled": True, "size": 6}
     answer = next(node for node in graph["nodes"] if node["id"] == "answer")
-    assert "map_cards.visual_cards" in answer["data"]["answer"]
+    assert "inject_photos.final_answer" in answer["data"]["answer"]
+    inject = next(node for node in graph["nodes"] if node["id"] == "inject_photos")
+    injected_variables = {item["variable"]: item["value_selector"] for item in inject["data"]["variables"]}
+    assert injected_variables["explain_text"] == ["explain", "text"]
+    assert injected_variables["visual_cards"] == ["map_cards", "visual_cards"]
+    assert injected_variables["place_photos"] == ["map_cards", "place_photos"]
+    edges = {(edge["source"], edge["target"]) for edge in graph["edges"]}
+    assert ("explain", "inject_photos") in edges
+    assert ("inject_photos", "answer") in edges
+    start_variables = {
+        item["variable"]
+        for item in next(node for node in graph["nodes"] if node["id"] == "start")["data"]["variables"]
+    }
+    assert "location_name" in start_variables
 
 
 def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
@@ -463,7 +477,11 @@ def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
                     }
                 ],
                 "places": [
-                    {"name": "测试", "image_urls": ["https://store.is.autonavi.com/p.jpg"]},
+                    {
+                        "name": "测试",
+                        "image_urls": ["https://store.is.autonavi.com/p.jpg"],
+                        "navigation_url": "https://uri.amap.com/navigation?to=p1",
+                    },
                     {"name": "坏图", "image_urls": ["javascript:alert(1)"]},
                 ],
                 "additional_places": [
@@ -479,17 +497,84 @@ def test_map_card_node_builds_visual_map_and_rejects_bad_photo_urls():
             ensure_ascii=False,
         ),
         "https://guide.example.com",
-    )["visual_cards"]
+    )
+    visual_cards = result["visual_cards"]
+    photos = json.loads(result["place_photos"])
 
-    assert "https://guide.example.com/api/route-map?" in result
-    assert "实际路线" in result
-    assert "🚶 步行" in result
-    assert "https://store.is.autonavi.com/p.jpg" in result
-    assert "javascript:" not in result
-    assert "其他候选" in result
-    assert "备选足疗店" in result
-    assert "洗浴推拿场所" in result
-    assert "https://uri.amap.com/navigation?to=116.3,40.0" in result
+    assert "https://guide.example.com/api/route-map?" in visual_cards
+    assert "实际路线" in visual_cards
+    assert "🚶 步行" in visual_cards
+    # 地点图片不再堆在卡片末尾，而是通过 place_photos 交给注入节点
+    assert "推荐地点图片" not in visual_cards
+    assert "javascript:" not in visual_cards
+    assert "其他候选" in visual_cards
+    assert "备选足疗店" in visual_cards
+    assert "洗浴推拿场所" in visual_cards
+    assert "https://uri.amap.com/navigation?to=116.3,40.0" in visual_cards
+    assert photos == [
+        {
+            "index": 1,
+            "name": "测试",
+            "image_url": "https://store.is.autonavi.com/p.jpg",
+            "navigation_url": "https://uri.amap.com/navigation?to=p1",
+        }
+    ]
+
+
+def test_inject_photos_node_attaches_photo_below_each_recommendation():
+    dsl = yaml.safe_load(DSL_PATH.read_text(encoding="utf-8"))
+    node = next(
+        node for node in dsl["workflow"]["graph"]["nodes"] if node["id"] == "inject_photos"
+    )
+    namespace = {}
+    exec(node["data"]["code"], namespace)
+
+    explain_text = "\n".join(
+        [
+            "# 附近晚餐推荐",
+            "**1. 测试餐厅** 为什么适合：距离近。",
+            "已知事实：人均 50 元。[打开高德导航](https://uri.amap.com/navigation?to=p1)",
+            "**2. 备选咖啡** 适合聊天。[打开高德导航](https://uri.amap.com/navigation?to=p2)",
+        ]
+    )
+    visual_cards = "## 高德位置概览\n![map:示意](https://example.com/api/route-map?sig=x)"
+    place_photos = json.dumps(
+        [
+            {
+                "index": 1,
+                "name": "测试餐厅",
+                "image_url": "https://store.is.autonavi.com/p1.jpg",
+                "navigation_url": "https://uri.amap.com/navigation?to=p1",
+            },
+            {
+                "index": 2,
+                "name": "备选咖啡",
+                "image_url": "https://store.is.autonavi.com/p2.jpg",
+                "navigation_url": "https://uri.amap.com/navigation?to=p2",
+            },
+            {
+                "index": 3,
+                "name": "坏图",
+                "image_url": "javascript:alert(1)",
+                "navigation_url": "",
+            },
+        ],
+        ensure_ascii=False,
+    )
+
+    answer = namespace["main"](explain_text, visual_cards, place_photos)["final_answer"]
+
+    p1_line = "[打开高德导航](https://uri.amap.com/navigation?to=p1)\n\n![1·测试餐厅](https://store.is.autonavi.com/p1.jpg)"
+    p2_line = "[打开高德导航](https://uri.amap.com/navigation?to=p2)\n\n![2·备选咖啡](https://store.is.autonavi.com/p2.jpg)"
+    assert p1_line in answer
+    assert p2_line in answer
+    assert "javascript:" not in answer
+    assert answer.rstrip().endswith(visual_cards)
+    # 无法匹配导航行时不丢图：兜底追加在推荐区块之后
+    orphan = namespace["main"]("### 推荐", "", json.dumps(
+        [{"index": 1, "name": "孤立图", "image_url": "https://store.is.autonavi.com/x.jpg", "navigation_url": ""}]
+    ))["final_answer"]
+    assert "![1·孤立图](https://store.is.autonavi.com/x.jpg)" in orphan
 
 
 def test_normalizer_builds_personalized_context_and_safe_location_fallback():

@@ -39,13 +39,7 @@ Chatflow 同时包含两层记忆：提取节点读取最近 8 轮、生成节�
 
 DSL 已移除 Dify 的 `speech_to_text`，并默认关闭 `text_to_speech`。这是因为 DeepSeek/OpenAI-compatible 文本模型不是 Dify 的默认语音模型；在工作区未配置 TTS 时开启自动朗读，会使整个 Chatflow 在运行前因 `Default model not found for tts` 失败。
 
-本项目 H5 不依赖 Dify 语音模型：
-
-- 优先使用浏览器原生中文语音识别将口述内容回填到输入框。
-- 回答完成后使用浏览器中文语音合成自动朗读，可通过顶部开关静音。
-- 对不支持浏览器语音识别的环境，仍保留后端 `/api/audio-to-text` 作为可选通道；使用它前需在 Dify 配置默认 Speech-to-Text 模型。
-
-如果将来已在 Dify 工作区配置独立的 Speech-to-Text 和 Text-to-Speech 模型，可再手动开启对应功能。麦克风与自动播放在生产环境需要 HTTPS 和用户授权。
+当前版本 H5 已彻底移除语音输入与朗读功能，后端 `/api/audio-to-text` 端点也已删除，无需在 Dify 配置任何语音模型。
 
 ## 4. 配置 Chatflow 环境变量
 
@@ -71,7 +65,7 @@ H5 经后端调用：
 POST https://api.dify.ai/v1/chat-messages
 ```
 
-输入变量由后端自动传递：`longitude`、`latitude`、`coordinate_system`、`location_accuracy` 和 `fallback_location_name`。
+输入变量由后端自动传递：`longitude`、`latitude`、`coordinate_system`、`location_accuracy`、`location_name` 和 `fallback_location_name`。`location_name` 是起点可读名称：用户在 H5 手动选点时为地点名，浏览器定位时由后端调用高德逆地理编码自动解析；生成推荐说明的节点会用它描述当前位置。
 
 ## 6. 联调
 

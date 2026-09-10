@@ -14,41 +14,6 @@ class DifyError(RuntimeError):
     pass
 
 
-async def transcribe_audio(
-    *,
-    content: bytes,
-    filename: str,
-    content_type: str,
-    user: str,
-    http: httpx.AsyncClient,
-    settings: Settings,
-) -> str:
-    if not settings.dify_api_key:
-        raise DifyError("DIFY_API_KEY 尚未配置")
-    try:
-        response = await http.post(
-            f"{settings.dify_api_base_url.rstrip('/')}/audio-to-text",
-            headers={"Authorization": f"Bearer {settings.dify_api_key}"},
-            files={"file": (filename, content, content_type)},
-            data={"user": user},
-        )
-    except httpx.HTTPError as exc:
-        raise DifyError("语音识别服务暂时不可用") from exc
-    if response.status_code >= 400:
-        try:
-            detail = response.json().get("message")
-        except (ValueError, AttributeError):
-            detail = response.text
-        raise DifyError(detail or f"语音识别返回 HTTP {response.status_code}")
-    try:
-        text = str(response.json().get("text") or "").strip()
-    except (ValueError, AttributeError) as exc:
-        raise DifyError("语音识别返回了无法解析的数据") from exc
-    if not text:
-        raise DifyError("没有识别到清晰语音")
-    return text
-
-
 _COMPLETE_THINK_BLOCK = re.compile(
     r"<think\b[^>]*>[\s\S]*?</think\s*>",
     re.IGNORECASE,
@@ -127,6 +92,7 @@ async def stream_chat(
             "latitude": f"{latitude:.6f}",
             "coordinate_system": payload.coordinate_system,
             "location_accuracy": str(payload.accuracy or ""),
+            "location_name": payload.position_name.strip()[:80],
             "fallback_location_name": settings.default_location_name,
         },
         "query": payload.query,
